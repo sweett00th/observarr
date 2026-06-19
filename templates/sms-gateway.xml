@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>sms-gateway</Name>
+  <Repository>ghcr.io/joemess21/sms-gateway:latest</Repository>
+  <Registry>https://ghcr.io/joemess21/sms-gateway</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/joemess21/sms-gateway/issues</Support>
+  <Project>https://github.com/joemess21/sms-gateway</Project>
+  <Overview>Internal LAN-only webhook-to-SMS gateway for home server notifications from Jellyseerr/Seerr, Jellyfin, Radarr, and Sonarr. This initial scaffold receives test webhooks and exposes health/version endpoints; SMS provider delivery is not implemented yet.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:3020]/health</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/joemess21/sms-gateway/main/templates/sms-gateway.xml</TemplateURL>
+  <Icon/>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/sms-gateway" Mode="rw" Description="Application config directory." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/sms-gateway</Config>
+  <Config Name="Web UI Port" Target="3020" Default="3020" Mode="tcp" Description="HTTP port for sms-gateway." Type="Port" Display="always" Required="true" Mask="false">3020</Config>
+  <Config Name="TZ" Target="TZ" Default="America/New_York" Mode="" Description="Container timezone." Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
+  <Config Name="SHARED_SECRET" Target="SHARED_SECRET" Default="" Mode="" Description="Optional webhook shared secret. When set, webhook requests must include the x-sms-secret header." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="TWILIO_ACCOUNT_SID" Target="TWILIO_ACCOUNT_SID" Default="" Mode="" Description="Future Twilio account SID placeholder. Not used by the scaffold yet." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="TWILIO_AUTH_TOKEN" Target="TWILIO_AUTH_TOKEN" Default="" Mode="" Description="Future Twilio auth token placeholder. Not used by the scaffold yet." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="TWILIO_FROM" Target="TWILIO_FROM" Default="" Mode="" Description="Future Twilio sender phone number placeholder." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="SMS_TO" Target="SMS_TO" Default="" Mode="" Description="Future SMS recipient phone number placeholder." Type="Variable" Display="always" Required="false" Mask="false"/>
+</Container>
