@@ -34,7 +34,7 @@ export type OverviewCounts = {
   profiles: number;
   templates: number;
   users: number;
-  trackedMedia: number;
+  mediaTimelines: number;
 };
 
 export async function initializeDatabase(): Promise<Database> {
@@ -104,7 +104,7 @@ export function getOverviewCounts(db: Database): OverviewCounts {
     profiles: countRows(db, "notification_profiles"),
     templates: countRows(db, "event_templates"),
     users: countRows(db, "users"),
-    trackedMedia: countRows(db, "tracked_media"),
+    mediaTimelines: countRows(db, "media_items"),
   };
 }
 

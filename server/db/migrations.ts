@@ -118,6 +118,89 @@ const migrations: Migration[] = [
       CREATE INDEX tracked_media_events_timestamp_idx ON tracked_media_events(timestamp);
     `,
   },
+  {
+    version: 3,
+    name: "media_timelines",
+    sql: `
+      CREATE TABLE media_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_key TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        normalized_title TEXT NOT NULL,
+        media_type TEXT,
+        tmdb_id TEXT,
+        imdb_id TEXT,
+        tvdb_id TEXT,
+        source_first_seen TEXT,
+        lifecycle_status TEXT NOT NULL DEFAULT 'active',
+        available_at TEXT,
+        cleanup_after TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE media_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_item_id INTEGER NOT NULL,
+        live_event_id TEXT,
+        timestamp TEXT NOT NULL,
+        source TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        raw_payload TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (media_item_id) REFERENCES media_items(id) ON DELETE CASCADE
+      );
+
+      CREATE UNIQUE INDEX media_items_media_key_idx ON media_items(media_key);
+      CREATE INDEX media_items_normalized_title_idx ON media_items(normalized_title);
+      CREATE INDEX media_items_cleanup_after_idx ON media_items(cleanup_after);
+      CREATE INDEX media_events_media_item_id_timestamp_idx ON media_events(media_item_id, timestamp);
+      CREATE INDEX media_events_live_event_media_idx ON media_events(live_event_id, media_item_id);
+
+      INSERT INTO media_items (
+        media_key, title, normalized_title, media_type, source_first_seen,
+        lifecycle_status, created_at, updated_at
+      )
+      SELECT
+        media_key,
+        title,
+        lower(trim(replace(replace(replace(title, ':', ' '), '.', ' '), '-', ' '))),
+        media_type,
+        source,
+        status,
+        created_at,
+        updated_at
+      FROM tracked_media
+      WHERE EXISTS (
+        SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tracked_media'
+      );
+
+      INSERT INTO media_events (
+        media_item_id, live_event_id, timestamp, source, event_type,
+        severity, title, message, raw_payload, created_at
+      )
+      SELECT
+        mi.id,
+        tme.live_event_id,
+        tme.timestamp,
+        tme.source,
+        tme.event_type,
+        tme.severity,
+        tme.title,
+        tme.message,
+        tme.raw_payload,
+        tme.created_at
+      FROM tracked_media_events tme
+      JOIN tracked_media tm ON tm.id = tme.tracked_media_id
+      JOIN media_items mi ON mi.media_key = tm.media_key
+      WHERE EXISTS (
+        SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tracked_media_events'
+      );
+    `,
+  },
 ];
 
 export function runMigrations(db: DB): void {

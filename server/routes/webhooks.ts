@@ -3,7 +3,7 @@ import type { Database } from "../db/index.ts";
 import { eventBus, type EventSourceName, normalizeWebhookEvent } from "../events/eventBus.ts";
 import { getSharedSecret } from "../lib/config.ts";
 import { summarizePayload } from "../lib/payload.ts";
-import { persistEventForTrackedMedia } from "../tracking/trackedMedia.ts";
+import { persistMediaEvent } from "../tracking/mediaTimelines.ts";
 
 const maxJsonBytes = 1024 * 1024;
 const webhookSources: EventSourceName[] = [
@@ -43,7 +43,7 @@ export function createWebhookRoutes(db: Database): Hono {
       }
 
       const event = eventBus.publish(normalizeWebhookEvent(source, payload.value));
-      persistEventForTrackedMedia(db, event);
+      persistMediaEvent(db, event);
 
       return c.json({
         ok: true,
@@ -61,7 +61,7 @@ export function createWebhookRoutes(db: Database): Hono {
 
     const summary = summarizePayload(payload.value);
     const event = eventBus.publish(normalizeWebhookEvent("test", payload.value));
-    persistEventForTrackedMedia(db, event);
+    persistMediaEvent(db, event);
 
     console.log(
       JSON.stringify({

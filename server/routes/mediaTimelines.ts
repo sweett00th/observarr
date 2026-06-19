@@ -11,17 +11,17 @@ type FromEventPayload = {
   eventId?: unknown;
 };
 
-export function createTrackedMediaRoutes(db: Database): Hono {
-  const tracked = new Hono();
+export function createMediaTimelineRoutes(db: Database): Hono {
+  const media = new Hono();
 
-  tracked.get("/", (c) => {
+  media.get("/", (c) => {
     return c.json({
       ok: true,
       media: listMediaTimelines(db),
     });
   });
 
-  tracked.post("/from-event", async (c) => {
+  media.post("/from-event", async (c) => {
     let payload: FromEventPayload;
 
     try {
@@ -57,7 +57,7 @@ export function createTrackedMediaRoutes(db: Database): Hono {
     });
   });
 
-  tracked.get("/:id", (c) => {
+  media.get("/:id", (c) => {
     const id = Number(c.req.param("id"));
 
     if (!Number.isInteger(id) || id < 1) {
@@ -65,20 +65,20 @@ export function createTrackedMediaRoutes(db: Database): Hono {
         {
           ok: false,
           status: "bad_request",
-          error: "Invalid tracked media id",
+          error: "Invalid media timeline id",
         },
         400,
       );
     }
 
-    const media = getMediaTimeline(db, id);
+    const item = getMediaTimeline(db, id);
 
-    if (!media) {
+    if (!item) {
       return c.json(
         {
           ok: false,
           status: "not_found",
-          error: "Tracked media not found",
+          error: "Media timeline not found",
         },
         404,
       );
@@ -86,10 +86,10 @@ export function createTrackedMediaRoutes(db: Database): Hono {
 
     return c.json({
       ok: true,
-      media,
+      media: item,
       events: listMediaTimelineEvents(db, id),
     });
   });
 
-  return tracked;
+  return media;
 }

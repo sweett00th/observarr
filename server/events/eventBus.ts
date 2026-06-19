@@ -139,6 +139,7 @@ export function normalizeWebhookEvent(
     "event",
     "notificationType",
     "NotificationType",
+    "notification_type",
     "type",
   ]) || "webhook";
   const title = pickString(data, ["title", "subject", "name", "Name"]) ||

@@ -73,7 +73,7 @@ type OverviewResponse = {
     profiles: number;
     templates: number;
     users: number;
-    trackedMedia: number;
+    mediaTimelines: number;
   };
   providerConfigured: boolean;
 };
@@ -101,7 +101,7 @@ type LiveEvent = {
   rawPayload?: unknown;
 };
 
-type TrackedMedia = {
+type MediaTimeline = {
   id: number;
   mediaKey: string;
   mediaType: string | null;
@@ -113,9 +113,9 @@ type TrackedMedia = {
   lastEventAt: string | null;
 };
 
-type TrackedMediaEvent = {
+type MediaTimelineEvent = {
   id: number;
-  trackedMediaId: number;
+  mediaItemId: number;
   liveEventId: string | null;
   timestamp: string;
   source: EventSourceName;
@@ -152,8 +152,8 @@ function App() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [page, setPage] = useState<"dashboard" | "tracked-media">("dashboard");
-  const [selectedTrackedMediaId, setSelectedTrackedMediaId] = useState<number | null>(null);
+  const [page, setPage] = useState<"dashboard" | "media-timelines">("dashboard");
+  const [selectedMediaTimelineId, setSelectedMediaTimelineId] = useState<number | null>(null);
 
   useEffect(() => {
     fetchVersion();
@@ -254,9 +254,9 @@ function App() {
     fetchAuthState();
   }
 
-  function openTrackedMedia(id: number | null) {
-    setSelectedTrackedMediaId(id);
-    setPage("tracked-media");
+  function openMediaTimeline(id: number | null) {
+    setSelectedMediaTimelineId(id);
+    setPage("media-timelines");
   }
 
   return (
@@ -287,10 +287,10 @@ function App() {
           <Stack alignItems="center" justifyContent="center" sx={{ minHeight: "70vh" }}>
             <CircularProgress />
           </Stack>
-        ) : user && page === "tracked-media" ? (
-          <TrackedMediaPage
-            selectedMediaId={selectedTrackedMediaId}
-            onSelectMedia={setSelectedTrackedMediaId}
+        ) : user && page === "media-timelines" ? (
+          <MediaTimelinesPage
+            selectedMediaId={selectedMediaTimelineId}
+            onSelectMedia={setSelectedMediaTimelineId}
             onBack={() => setPage("dashboard")}
           />
         ) : user ? (
@@ -298,7 +298,7 @@ function App() {
             version={version}
             status={backendStatus}
             overview={overview}
-            onOpenTrackedMedia={openTrackedMedia}
+            onOpenMediaTimeline={openMediaTimeline}
           />
         ) : (
           <LoginScreen
@@ -315,7 +315,7 @@ function App() {
             onClose={() => setProfileOpen(false)}
           />
         )}
-        {user && <EventConsole onOpenTrackedMedia={openTrackedMedia} />}
+        {user && <EventConsole onOpenMediaTimeline={openMediaTimeline} />}
       </Box>
     </ThemeProvider>
   );
@@ -511,19 +511,19 @@ function Dashboard({
   version,
   status,
   overview,
-  onOpenTrackedMedia,
+  onOpenMediaTimeline,
 }: {
   version: VersionResponse | null;
   status: "loading" | "online" | "error";
   overview: OverviewResponse | null;
-  onOpenTrackedMedia: (id: number | null) => void;
+  onOpenMediaTimeline: (id: number | null) => void;
 }) {
   const placeholders = [
     {
-      title: "Tracked Media",
-      body: `${overview?.counts.trackedMedia ?? 0} media timelines tracked.`,
+      title: "Media Timelines",
+      body: `${overview?.counts.mediaTimelines ?? 0} media timelines.`,
       icon: <TimelineIcon />,
-      action: () => onOpenTrackedMedia(null),
+      action: () => onOpenMediaTimeline(null),
     },
     {
       title: "Message Receipts",
@@ -630,7 +630,7 @@ function Dashboard({
   );
 }
 
-function TrackedMediaPage({
+function MediaTimelinesPage({
   selectedMediaId,
   onSelectMedia,
   onBack,
@@ -639,15 +639,15 @@ function TrackedMediaPage({
   onSelectMedia: (id: number | null) => void;
   onBack: () => void;
 }) {
-  const [items, setItems] = useState<TrackedMedia[]>([]);
-  const [selected, setSelected] = useState<TrackedMedia | null>(null);
-  const [events, setEvents] = useState<TrackedMediaEvent[]>([]);
+  const [items, setItems] = useState<MediaTimeline[]>([]);
+  const [selected, setSelected] = useState<MediaTimeline | null>(null);
+  const [events, setEvents] = useState<MediaTimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    fetch("/api/tracked-media")
-      .then((response) => response.json() as Promise<{ ok: boolean; media: TrackedMedia[] }>)
+    fetch("/api/media-timelines")
+      .then((response) => response.json() as Promise<{ ok: boolean; media: MediaTimeline[] }>)
       .then((data) => {
         setItems(data.media);
         const nextId = selectedMediaId ?? data.media[0]?.id ?? null;
@@ -663,11 +663,11 @@ function TrackedMediaPage({
       return;
     }
 
-    fetch(`/api/tracked-media/${selectedMediaId}`)
+    fetch(`/api/media-timelines/${selectedMediaId}`)
       .then((response) => response.json() as Promise<{
         ok: boolean;
-        media: TrackedMedia;
-        events: TrackedMediaEvent[];
+        media: MediaTimeline;
+        events: MediaTimelineEvent[];
       }>)
       .then((data) => {
         setSelected(data.media);
@@ -689,10 +689,10 @@ function TrackedMediaPage({
           </Button>
           <Box>
             <Typography variant="h5" component="h2">
-              Tracked Media
+              Media Timelines
             </Typography>
             <Typography color="text.secondary">
-              Persistent timelines for media selected from live webhook events.
+              Persistent timelines automatically identified from live webhook events.
             </Typography>
           </Box>
         </Stack>
@@ -701,7 +701,7 @@ function TrackedMediaPage({
           <CircularProgress />
         ) : items.length === 0 ? (
           <Alert severity="info">
-            No tracked media yet. Open the Event Console and choose Track this media on a media event.
+            No media timelines yet. Send a media webhook event and it will appear here automatically.
           </Alert>
         ) : (
           <Stack spacing={3}>
@@ -712,7 +712,7 @@ function TrackedMediaPage({
                     <Stack spacing={2} sx={{ height: "100%" }}>
                       <TextField
                         size="small"
-                        label="Search tracked media"
+                        label="Search media timelines"
                         value={search}
                         onChange={(event) => setSearch(event.target.value)}
                         fullWidth
@@ -750,9 +750,9 @@ function TrackedMediaPage({
 
               <Grid item xs={12} md={8}>
                 {selected ? (
-                  <TrackedMediaEventList media={selected} events={sortedEvents} />
+                  <MediaTimelineEventList media={selected} events={sortedEvents} />
                 ) : (
-                  <Alert severity="info">Select a tracked item.</Alert>
+                  <Alert severity="info">Select a media timeline.</Alert>
                 )}
               </Grid>
             </Grid>
@@ -760,7 +760,7 @@ function TrackedMediaPage({
             {selected && (
               <Grid container spacing={3}>
                 <Grid item xs={12}>
-                  <TrackedMediaTimelineGraph media={selected} events={sortedEvents} />
+                  <MediaTimelineGraph media={selected} events={sortedEvents} />
                 </Grid>
               </Grid>
             )}
@@ -771,12 +771,12 @@ function TrackedMediaPage({
   );
 }
 
-function TrackedMediaEventList({
+function MediaTimelineEventList({
   media,
   events,
 }: {
-  media: TrackedMedia;
-  events: TrackedMediaEvent[];
+  media: MediaTimeline;
+  events: MediaTimelineEvent[];
 }) {
   return (
     <Card variant="outlined" sx={{ height: 560 }}>
@@ -848,12 +848,12 @@ function TrackedMediaEventList({
   );
 }
 
-function TrackedMediaTimelineGraph({
+function MediaTimelineGraph({
   media,
   events,
 }: {
-  media: TrackedMedia;
-  events: TrackedMediaEvent[];
+  media: MediaTimeline;
+  events: MediaTimelineEvent[];
 }) {
   if (events.length === 0) {
     return null;
@@ -1017,9 +1017,9 @@ const sourceLabels: Record<EventSourceName, string> = {
 };
 
 function EventConsole({
-  onOpenTrackedMedia,
+  onOpenMediaTimeline,
 }: {
-  onOpenTrackedMedia: (id: number | null) => void;
+  onOpenMediaTimeline: (id: number | null) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [drawerHeight, setDrawerHeight] = useState(() => {
@@ -1238,7 +1238,7 @@ function EventConsole({
                 <EventRow
                   key={event.id}
                   event={event}
-                  onOpenTrackedMedia={onOpenTrackedMedia}
+                  onOpenMediaTimeline={onOpenMediaTimeline}
                 />
               ))
             )}
@@ -1251,14 +1251,14 @@ function EventConsole({
 
 function EventRow({
   event,
-  onOpenTrackedMedia,
+  onOpenMediaTimeline,
 }: {
   event: LiveEvent;
-  onOpenTrackedMedia: (id: number | null) => void;
+  onOpenMediaTimeline: (id: number | null) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [tracking, setTracking] = useState(false);
-  const [trackedMediaId, setTrackedMediaId] = useState<number | null>(null);
+  const [openingTimeline, setOpeningTimeline] = useState(false);
+  const [mediaTimelineId, setMediaTimelineId] = useState<number | null>(null);
   const [trackError, setTrackError] = useState<string | null>(null);
   const [payloadHeight, setPayloadHeight] = useState(() => {
     const savedHeight = Number(localStorage.getItem("sms-gateway:event-payload-height"));
@@ -1295,13 +1295,13 @@ function EventRow({
     window.addEventListener("pointerup", handlePointerUp);
   }
 
-  async function handleTrackMedia(clickEvent: ReactMouseEvent<HTMLButtonElement>) {
+  async function handleOpenMediaTimeline(clickEvent: ReactMouseEvent<HTMLButtonElement>) {
     clickEvent.stopPropagation();
-    setTracking(true);
+    setOpeningTimeline(true);
     setTrackError(null);
 
     try {
-      const response = await fetch("/api/tracked-media/from-event", {
+      const response = await fetch("/api/media-timelines/from-event", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1311,14 +1311,15 @@ function EventRow({
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Could not track media");
+        throw new Error(data.error || "Could not find media timeline");
       }
 
-      setTrackedMediaId(data.media.id);
+      setMediaTimelineId(data.media.id);
+      onOpenMediaTimeline(data.media.id);
     } catch (caughtError) {
-      setTrackError(caughtError instanceof Error ? caughtError.message : "Could not track media");
+      setTrackError(caughtError instanceof Error ? caughtError.message : "Could not find media timeline");
     } finally {
-      setTracking(false);
+      setOpeningTimeline(false);
     }
   }
 
@@ -1371,25 +1372,25 @@ function EventRow({
           {event.message ? ` - ${event.message}` : ""}
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
-        {trackedMediaId ? (
+        {mediaTimelineId ? (
           <Button
             size="small"
             onClick={(clickEvent) => {
               clickEvent.stopPropagation();
-              onOpenTrackedMedia(trackedMediaId);
+              onOpenMediaTimeline(mediaTimelineId);
             }}
-            sx={{ color: "#d1d5db", minWidth: 96 }}
+            sx={{ color: "#d1d5db", minWidth: 112 }}
           >
             Open timeline
           </Button>
         ) : (
           <Button
             size="small"
-            onClick={handleTrackMedia}
-            disabled={tracking}
-            sx={{ color: "#d1d5db", minWidth: 110 }}
+            onClick={handleOpenMediaTimeline}
+            disabled={openingTimeline}
+            sx={{ color: "#d1d5db", minWidth: 112 }}
           >
-            {tracking ? "Tracking" : "Track media"}
+            {openingTimeline ? "Opening" : "Open timeline"}
           </Button>
         )}
       </Stack>

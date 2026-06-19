@@ -4,6 +4,10 @@ export type MediaIdentity = {
   mediaKey: string;
   mediaType: string | null;
   title: string;
+  normalizedTitle: string;
+  tmdbId: string | null;
+  imdbId: string | null;
+  tvdbId: string | null;
 };
 
 export function identifyMedia(event: LiveEvent): MediaIdentity | null {
@@ -20,13 +24,13 @@ export function identifyMedia(event: LiveEvent): MediaIdentity | null {
   const mediaType = event.entityType ||
     pickString(raw, ["entityType", "mediaType", "MediaType", "itemType"]) ||
     inferMediaType(event);
-  const externalId = pickString(raw, ["tmdbId", "imdbId", "tvdbId", "guid"]) ||
-    pickNestedString(raw, [
-      ["movie", "tmdbId"],
-      ["movie", "imdbId"],
-      ["series", "tvdbId"],
-      ["series", "imdbId"],
-    ]);
+  const tmdbId = pickString(raw, ["tmdbId", "tmdb_id"]) ||
+    pickNestedString(raw, [["movie", "tmdbId"], ["movie", "tmdb_id"]]) || null;
+  const imdbId = pickString(raw, ["imdbId", "imdb_id"]) ||
+    pickNestedString(raw, [["movie", "imdbId"], ["series", "imdbId"]]) || null;
+  const tvdbId = pickString(raw, ["tvdbId", "tvdb_id"]) ||
+    pickNestedString(raw, [["series", "tvdbId"], ["series", "tvdb_id"]]) || null;
+  const externalId = tmdbId || imdbId || tvdbId || pickString(raw, ["guid"]);
   const year = pickString(raw, ["year", "releaseYear"]) ||
     pickNestedString(raw, [["movie", "year"], ["series", "year"]]);
   const keyParts = externalId
@@ -37,7 +41,15 @@ export function identifyMedia(event: LiveEvent): MediaIdentity | null {
     mediaKey: keyParts.join(":"),
     mediaType: mediaType || null,
     title,
+    normalizedTitle: normalizeSearchText(title),
+    tmdbId,
+    imdbId,
+    tvdbId,
   };
+}
+
+export function normalizeSearchText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
 }
 
 function inferMediaType(event: LiveEvent): string | null {

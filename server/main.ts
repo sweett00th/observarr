@@ -6,11 +6,23 @@ import { createAdminRoutes } from "./routes/admin.ts";
 import { createAuthRoutes } from "./routes/auth.ts";
 import { createEventRoutes } from "./routes/events.ts";
 import health from "./routes/health.ts";
+import { createMediaTimelineRoutes } from "./routes/mediaTimelines.ts";
 import { createTrackedMediaRoutes } from "./routes/trackedMedia.ts";
 import { createWebhookRoutes } from "./routes/webhooks.ts";
 import { getPort, getSharedSecret } from "./lib/config.ts";
+import {
+  cleanupExpiredMediaTimelines,
+  startMediaTimelineCleanupJob,
+} from "./tracking/mediaTimelines.ts";
 
 const db = await initializeDatabase();
+const cleanedTimelines = cleanupExpiredMediaTimelines(db);
+startMediaTimelineCleanupJob(db);
+
+if (cleanedTimelines > 0) {
+  console.log(`Cleaned up ${cleanedTimelines} expired media timeline(s).`);
+}
+
 const app = new Hono();
 const port = getPort();
 
@@ -37,8 +49,12 @@ app.route("/", health);
 app.route("/api/auth", createAuthRoutes(db));
 app.use("/api/admin/*", requireAdmin(db));
 app.use("/api/events/*", requireAdmin(db));
+app.use("/api/media-timelines", requireAdmin(db));
+app.use("/api/media-timelines/*", requireAdmin(db));
+app.use("/api/tracked-media", requireAdmin(db));
 app.use("/api/tracked-media/*", requireAdmin(db));
 app.route("/api/events", createEventRoutes());
+app.route("/api/media-timelines", createMediaTimelineRoutes(db));
 app.route("/api/tracked-media", createTrackedMediaRoutes(db));
 app.route("/api", createAdminRoutes(db));
 app.route("/webhook", createWebhookRoutes(db));
