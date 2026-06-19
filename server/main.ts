@@ -1,0 +1,80 @@
+import { Hono } from "@hono/hono";
+import { serveStatic } from "@hono/hono/deno";
+import admin from "./routes/admin.ts";
+import health from "./routes/health.ts";
+import webhooks from "./routes/webhooks.ts";
+import { getPort, getSharedSecret } from "./lib/config.ts";
+
+const app = new Hono();
+const port = getPort();
+
+app.use("*", async (c, next) => {
+  const startedAt = Date.now();
+  await next();
+  console.log(`${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - startedAt}ms`);
+});
+
+app.onError((err, c) => {
+  console.error(err);
+
+  return c.json(
+    {
+      ok: false,
+      status: "error",
+      error: "Internal server error",
+    },
+    500,
+  );
+});
+
+app.route("/", health);
+app.route("/api", admin);
+app.route("/webhook", webhooks);
+
+app.use("/*", serveStatic({ root: "./client/dist" }));
+
+app.notFound(async (c) => {
+  if (c.req.path.startsWith("/api/")) {
+    return c.json(
+      {
+        ok: false,
+        status: "not_found",
+        error: `No API route for ${c.req.method} ${c.req.path}`,
+      },
+      404,
+    );
+  }
+
+  if (c.req.path.startsWith("/webhook/")) {
+    return c.json(
+      {
+        ok: false,
+        status: "not_found",
+        error: `No webhook route for ${c.req.method} ${c.req.path}`,
+      },
+      404,
+    );
+  }
+
+  try {
+    const indexHtml = await Deno.readTextFile("./client/dist/index.html");
+    return c.html(indexHtml);
+  } catch {
+    return c.json(
+      {
+        ok: false,
+        status: "not_found",
+        error: "Frontend build not found. Run deno task build:client.",
+      },
+      404,
+    );
+  }
+});
+
+if (!getSharedSecret()) {
+  console.warn(
+    "SHARED_SECRET is not set. Webhook requests are allowed without x-sms-secret.",
+  );
+}
+
+Deno.serve({ hostname: "0.0.0.0", port }, app.fetch);

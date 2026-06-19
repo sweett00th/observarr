@@ -1,28 +1,76 @@
 # sms-gateway
 
-Minimal deployment scaffold for an internal Unraid Docker app that will receive home server webhooks and eventually send SMS notifications.
+Internal Unraid Docker app for receiving home server webhooks and, later, sending SMS notifications. This version focuses on the deployable app shell: a Deno/Hono backend, a Vite React admin panel, Docker packaging, GHCR publishing, and an Unraid template.
 
-The first version is intentionally small: it starts an Express server, exposes health/version endpoints, accepts a test webhook, and ships as a Docker image through GitHub Container Registry.
+No Twilio sending, database/storage, login, or auth system is implemented yet.
 
-## Local development
+## Architecture
+
+- Backend: Deno + TypeScript + Hono
+- Frontend: Vite + React + TypeScript + Material UI
+- Production: one Docker container
+- Image: `ghcr.io/sweett00th/sms-gateway`
+- Unraid template: `templates/sms-gateway.xml`
+
+In production, the Deno/Hono server handles API and webhook routes and serves the built React app from `client/dist`.
+
+In local development, the backend runs on port `3020` and Vite runs separately. Vite proxies `/api`, `/health`, and `/webhook` to `http://localhost:3020`.
+
+## Local Development
+
+Start the backend:
 
 ```powershell
-npm install
-npm start
+deno task dev:server
 ```
 
-By default the app listens on port `3020`. Override it with `PORT`.
+Start the frontend:
 
 ```powershell
-$env:PORT = "3020"
-npm start
+deno task dev:client
 ```
 
-## Endpoints
+Build the frontend:
 
-- `GET /health` returns service health JSON.
-- `GET /api/version` returns app, version, and build metadata.
-- `POST /webhook/test` accepts JSON and logs a short summary. It does not send SMS.
+```powershell
+deno task build:client
+```
+
+Start the production server locally after building the frontend:
+
+```powershell
+deno task start
+```
+
+Typecheck the backend:
+
+```powershell
+deno task check
+```
+
+Format backend/Deno files:
+
+```powershell
+deno task fmt
+```
+
+Frontend typechecking is part of the client build and can also be run directly:
+
+```powershell
+npm --prefix client run typecheck
+```
+
+## Routes
+
+- `GET /` serves the React admin panel when `client/dist` exists.
+- `GET /health` returns service health and Deno runtime info.
+- `GET /api/version` returns app, version, runtime, environment, and build metadata.
+- `GET /api/admin/overview` returns placeholder dashboard counts and provider configuration status.
+- `POST /webhook/test` accepts JSON, logs a summary, and returns the summary. It does not send SMS.
+
+Unknown `/api/*` and `/webhook/*` routes return JSON 404 responses. Unknown non-API routes fall back to the React `index.html` for future client-side routing.
+
+## Webhook Secret
 
 Webhook routes support an optional shared secret. If `SHARED_SECRET` is set, requests must include:
 
@@ -30,25 +78,24 @@ Webhook routes support an optional shared secret. If `SHARED_SECRET` is set, req
 x-sms-secret: your-secret
 ```
 
-For local development, leaving `SHARED_SECRET` unset allows webhook requests.
+If `SHARED_SECRET` is unset, webhook requests are allowed and the server logs a startup warning. Set it in Unraid for normal use.
 
-## First test
+## First Tests
 
 ```powershell
 curl http://localhost:3020/health
 ```
 
 ```powershell
-curl -Method POST http://localhost:3020/webhook/test `
-  -ContentType "application/json" `
-  -Body '{"source":"manual","message":"hello from curl"}'
+curl http://localhost:3020/api/version
 ```
 
-With `SHARED_SECRET` set:
+```powershell
+curl http://localhost:3020/api/admin/overview
+```
 
 ```powershell
 curl -Method POST http://localhost:3020/webhook/test `
-  -Headers @{ "x-sms-secret" = "change-me" } `
   -ContentType "application/json" `
   -Body '{"source":"manual","message":"hello from curl"}'
 ```
@@ -70,15 +117,17 @@ docker run --rm -p 3020:3020 `
   sms-gateway
 ```
 
-Then test:
+Open the admin panel:
 
-```powershell
-curl http://localhost:3020/health
+```text
+http://localhost:3020/
 ```
+
+The final image runs the Deno server, not the Vite dev server. The Docker build compiles the frontend first, copies `client/dist` into the final Deno image, and runs with explicit Deno permissions for env, network, and app file reads.
 
 ## GitHub Actions and GHCR
 
-The workflow at `.github/workflows/docker-publish.yml` builds the Docker image on pushes to `main`, pull requests, and semver tags like `v0.1.0`.
+`.github/workflows/docker-publish.yml` builds the Docker image on pushes to `main`, pull requests, and semver tags like `v0.1.0`.
 
 Pull requests build but do not push images. Pushes to `main` and tags publish to:
 
@@ -94,27 +143,27 @@ Expected tags include:
 
 ## Unraid
 
-The Unraid template is at `templates/sms-gateway.xml` and points to:
+The Unraid template points to:
 
 ```text
 ghcr.io/sweett00th/sms-gateway:latest
 ```
 
-To use it as a custom template repository in Unraid:
+The WebUI opens the admin panel at:
 
-1. Push this repo to GitHub.
-2. In Unraid, open Docker settings or Community Applications template repositories.
-3. Add the GitHub repository URL:
+```text
+http://[IP]:[PORT:3020]/
+```
+
+To add the custom template repository in Unraid, use:
 
 ```text
 https://github.com/sweett00th/sms-gateway
 ```
 
-4. Install the `sms-gateway` template and configure environment variables.
-
 Keep the app LAN-only. This scaffold does not assume public proxying, Cloudflare, NPM, or any external ingress.
 
-## Environment variables
+## Environment Variables
 
 Copy `.env.example` for local reference only. In Unraid, set values through the container template.
 
@@ -123,9 +172,9 @@ Copy `.env.example` for local reference only. In Unraid, set values through the 
 | `PORT` | No | HTTP port inside the container. Defaults to `3020`. |
 | `TZ` | No | Timezone. Defaults to `America/New_York` in the Unraid template. |
 | `SHARED_SECRET` | Recommended | Optional webhook secret checked against the `x-sms-secret` header. Set this in Unraid. |
-| `TWILIO_ACCOUNT_SID` | Future | Placeholder for Twilio integration. Not used yet. |
-| `TWILIO_AUTH_TOKEN` | Future | Placeholder for Twilio integration. Not used yet. |
-| `TWILIO_FROM` | Future | Placeholder sender phone number. Not used yet. |
-| `SMS_TO` | Future | Placeholder recipient phone number. Not used yet. |
+| `TWILIO_ACCOUNT_SID` | Future | Placeholder for Twilio configuration. Used only to report whether provider settings appear configured. |
+| `TWILIO_AUTH_TOKEN` | Future | Placeholder for Twilio configuration. No SMS is sent. |
+| `TWILIO_FROM` | Future | Placeholder sender phone number. No SMS is sent. |
+| `SMS_TO` | Future | Placeholder recipient phone number. No SMS is sent. |
 
 Do not commit real secrets.

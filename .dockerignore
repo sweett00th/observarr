@@ -1,12 +1,11 @@
 .git
 .github
 node_modules
+client/node_modules
+client/dist
 npm-debug.log
 Dockerfile
 .dockerignore
 .env
 .env.*
 !.env.example
-templates
-README.md
-AGENTS.md

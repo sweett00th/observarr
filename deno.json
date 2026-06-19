@@ -1,0 +1,20 @@
+{
+  "tasks": {
+    "dev:server": "deno run --watch --allow-env --allow-net --allow-read=. server/main.ts",
+    "dev:client": "npm --prefix client run dev",
+    "build:client": "npm --prefix client run build",
+    "start": "deno run --allow-env --allow-net --allow-read=. server/main.ts",
+    "check": "deno check server/main.ts",
+    "fmt": "deno fmt server/**/*.ts deno.json"
+  },
+  "imports": {
+    "@hono/hono": "jsr:@hono/hono@^4.6.16",
+    "@hono/hono/deno": "jsr:@hono/hono@^4.6.16/deno"
+  },
+  "fmt": {
+    "semiColons": true,
+    "singleQuote": false,
+    "lineWidth": 100
+  },
+  "lock": true
+}
