@@ -596,6 +596,10 @@ const sourceLabels: Record<EventSourceName, string> = {
 
 function EventConsole() {
   const [expanded, setExpanded] = useState(false);
+  const [drawerHeight, setDrawerHeight] = useState(() => {
+    const savedHeight = Number(localStorage.getItem("sms-gateway:event-console-height"));
+    return Number.isFinite(savedHeight) && savedHeight >= 260 ? savedHeight : 420;
+  });
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [status, setStatus] = useState<"connecting" | "live" | "disconnected">("connecting");
   const [enabledSources, setEnabledSources] = useState<Record<string, boolean>>(() => {
@@ -640,6 +644,10 @@ function EventConsole() {
     localStorage.setItem("sms-gateway:event-console-filters", JSON.stringify(enabledSources));
   }, [enabledSources]);
 
+  useEffect(() => {
+    localStorage.setItem("sms-gateway:event-console-height", String(drawerHeight));
+  }, [drawerHeight]);
+
   const allowedSources = new Set(
     sourceOptions.flatMap((option) => enabledSources[option.key] ? option.value : []),
   );
@@ -650,6 +658,28 @@ function EventConsole() {
       ...current,
       [key]: !current[key],
     }));
+  }
+
+  function handleResizeStart(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const startY = event.clientY;
+    const startHeight = drawerHeight;
+    const maxHeight = Math.max(260, window.innerHeight - 72);
+
+    function handlePointerMove(moveEvent: PointerEvent) {
+      const nextHeight = Math.min(maxHeight, Math.max(260, startHeight + startY - moveEvent.clientY));
+      setDrawerHeight(nextHeight);
+    }
+
+    function handlePointerUp() {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
   }
 
   return (
@@ -699,7 +729,33 @@ function EventConsole() {
       </Stack>
 
       {expanded && (
-        <Box sx={{ height: { xs: 360, md: 420 }, borderTop: "1px solid #1f2937" }}>
+        <Box sx={{ height: drawerHeight, borderTop: "1px solid #1f2937", position: "relative" }}>
+          <Box
+            onPointerDown={handleResizeStart}
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize Event Console"
+            sx={{
+              position: "absolute",
+              top: -5,
+              left: 0,
+              right: 0,
+              height: 10,
+              cursor: "ns-resize",
+              zIndex: 1,
+              "&::after": {
+                content: '""',
+                position: "absolute",
+                top: 4,
+                left: "50%",
+                width: 72,
+                height: 3,
+                borderRadius: 999,
+                bgcolor: "#4b5563",
+                transform: "translateX(-50%)",
+              },
+            }}
+          />
           <Stack
             direction="row"
             spacing={1}
