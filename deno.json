@@ -3,6 +3,7 @@
     "dev:server": "deno run --watch --allow-env --allow-net --allow-read=. server/main.ts",
     "dev:client": "npm --prefix client run dev",
     "build:client": "npm --prefix client run build",
+    "dev": "deno task dev:server & deno task dev:client",
     "start": "deno run --allow-env --allow-net --allow-read=. server/main.ts",
     "check": "deno check server/main.ts",
     "fmt": "deno fmt server/**/*.ts deno.json"
