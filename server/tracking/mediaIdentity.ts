@@ -8,6 +8,7 @@ export type MediaIdentity = {
   tmdbId: string | null;
   imdbId: string | null;
   tvdbId: string | null;
+  thumbnailUrl: string | null;
 };
 
 export function identifyMedia(event: LiveEvent): MediaIdentity | null {
@@ -45,7 +46,67 @@ export function identifyMedia(event: LiveEvent): MediaIdentity | null {
     tmdbId,
     imdbId,
     tvdbId,
+    thumbnailUrl: pickThumbnailUrl(raw),
   };
+}
+
+function pickThumbnailUrl(data: Record<string, unknown>): string | null {
+  const direct = pickString(data, [
+    "thumbnail",
+    "thumbnailUrl",
+    "thumbnail_url",
+    "poster",
+    "posterUrl",
+    "poster_url",
+    "image",
+    "imageUrl",
+    "image_url",
+    "primaryImage",
+    "primaryImageUrl",
+  ]);
+
+  if (direct && isLikelyImageUrl(direct)) {
+    return direct;
+  }
+
+  const nested = pickNestedString(data, [
+    ["movie", "posterUrl"],
+    ["movie", "remotePoster"],
+    ["movie", "thumbnailUrl"],
+    ["series", "posterUrl"],
+    ["series", "remotePoster"],
+    ["series", "thumbnailUrl"],
+    ["media", "posterUrl"],
+    ["media", "thumbnailUrl"],
+  ]);
+
+  if (nested && isLikelyImageUrl(nested)) {
+    return nested;
+  }
+
+  const images = findImageArray(data);
+  const image = images.find((item) =>
+    ["poster", "cover", "primary"].includes(String(item.coverType || item.type || "").toLowerCase())
+  ) || images[0];
+  const imageUrl = image ? pickString(image, ["remoteUrl", "url", "imageUrl", "thumbnailUrl"]) : undefined;
+
+  return imageUrl && isLikelyImageUrl(imageUrl) ? imageUrl : null;
+}
+
+function findImageArray(data: Record<string, unknown>): Array<Record<string, unknown>> {
+  const candidates = [data["images"], isObject(data["movie"]) ? data["movie"].images : undefined, isObject(data["series"]) ? data["series"].images : undefined];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate.filter(isObject);
+    }
+  }
+
+  return [];
+}
+
+function isLikelyImageUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value) || value.startsWith("/");
 }
 
 export function normalizeSearchText(value: string): string {

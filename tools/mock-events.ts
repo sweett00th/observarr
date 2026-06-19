@@ -143,6 +143,7 @@ function seerrEvent(journey: Journey, notificationType: string, message: string)
       requestedBy: journey.user,
       message,
       requestId: journey.id,
+      posterUrl: posterUrl(journey),
     },
   };
 }
@@ -157,6 +158,7 @@ function radarrEvent(journey: Journey, eventType: string, message: string): Mock
         title: journey.title,
         year: journey.year,
         tmdbId: journey.externalId,
+        posterUrl: posterUrl(journey),
       },
       quality: journey.quality,
       downloadClient: "SABnzbd",
@@ -175,6 +177,7 @@ function sonarrEvent(journey: Journey, eventType: string, message: string): Mock
         title: journey.title,
         year: journey.year,
         tvdbId: journey.externalId,
+        posterUrl: posterUrl(journey),
       },
       episode: {
         title: `Episode ${randomInt(1, 10)}`,
@@ -184,6 +187,7 @@ function sonarrEvent(journey: Journey, eventType: string, message: string): Mock
       quality: journey.quality,
       downloadClient: "SABnzbd",
       message,
+      posterUrl: posterUrl(journey),
     },
   };
 }
@@ -200,6 +204,7 @@ function sabnzbdEvent(journey: Journey, eventType: string, message: string): Moc
       name: `${journey.title}.${journey.quality.replaceAll(" ", ".")}`,
       status: eventType === "DownloadComplete" ? "Completed" : "Downloading",
       message,
+      posterUrl: posterUrl(journey),
     },
   };
 }
@@ -246,6 +251,10 @@ function randomInt(min: number, max: number): number {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function posterUrl(journey: Journey): string {
+  return `https://picsum.photos/seed/${encodeURIComponent(journey.title)}/120/180`;
 }
 
 function printHelp(): void {

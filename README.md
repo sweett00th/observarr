@@ -88,6 +88,7 @@ npm --prefix client run typecheck
 - `GET /api/events/recent` returns current in-memory Event Console events. It requires login.
 - `GET /api/events/stream` streams live Event Console events with Server-Sent Events. It requires login.
 - `GET /api/media-timelines` lists persisted media timelines. It requires login.
+- `DELETE /api/media-timelines` deletes selected media timelines by id. It requires login.
 - `POST /api/media-timelines/from-event` resolves the media timeline for a live event. It requires login.
 - `GET /api/media-timelines/:id` returns a media timeline. It requires login.
 - `POST /webhook/test` accepts JSON, logs a summary, emits a live test event, and returns the summary. It does not send SMS.
@@ -132,6 +133,8 @@ The console supports source filters for Jellyfin, Seerr, Radarr, Sonarr, SABnzbd
 
 The dashboard includes a `Media Timelines` widget. Open it to see media items identified from webhook events. The page has a searchable media list, a scrollable sorted event list for the selected item, and a horizontal timeline graph with source-colored dots. Hover over a dot to see event details and the gap from the previous step.
 
+Media timeline rows can be selected individually or in bulk from the left column and deleted manually. Deleting a media item removes its associated timeline events through SQLite cascade cleanup.
+
 Timeline persistence is automatic:
 
 1. A webhook event arrives.
@@ -141,6 +144,8 @@ Timeline persistence is automatic:
 5. If the media is new, a timeline is created and the event is appended.
 
 Media matching is intentionally loose in this pass. The app first tries derived keys from common fields such as `movie.title`, `series.title`, `tmdbId`, `imdbId`, `tvdbId`, `title`, `subject`, and media type hints. If that misses, incoming events are compared against existing media titles using normalized text from the event title, message, entity title, and sanitized raw payload. Source-specific matching can be improved later as real payload samples arrive.
+
+Media Timelines also stores a thumbnail URL when webhook payloads provide one through common poster/image fields such as `posterUrl`, `thumbnailUrl`, `imageUrl`, `movie.remotePoster`, `series.remotePoster`, or image arrays from media managers. If no thumbnail is available, the UI shows an initial-based fallback.
 
 When an event type normalizes to `MEDIA_AVAILABLE`, the media item is marked available and scheduled for cleanup after 14 days. Cleanup runs once on startup and then once per day while the container is running.
 

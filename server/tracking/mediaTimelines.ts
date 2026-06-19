@@ -14,6 +14,7 @@ export type MediaTimeline = {
   tmdbId: string | null;
   imdbId: string | null;
   tvdbId: string | null;
+  thumbnailUrl: string | null;
   sourceFirstSeen: string | null;
   lifecycleStatus: string;
   availableAt: string | null;
@@ -42,7 +43,7 @@ export type MediaTimelineEvent = {
 export function listMediaTimelines(db: Database): MediaTimeline[] {
   return [...db.query(`
     SELECT mi.id, mi.media_key, mi.title, mi.normalized_title, mi.media_type,
-      mi.tmdb_id, mi.imdb_id, mi.tvdb_id, mi.source_first_seen, mi.lifecycle_status,
+      mi.tmdb_id, mi.imdb_id, mi.tvdb_id, mi.thumbnail_url, mi.source_first_seen, mi.lifecycle_status,
       mi.available_at, mi.cleanup_after, mi.created_at, mi.updated_at,
       COUNT(me.id) AS event_count,
       MIN(me.timestamp) AS first_event_at,
@@ -57,7 +58,7 @@ export function listMediaTimelines(db: Database): MediaTimeline[] {
 export function getMediaTimeline(db: Database, id: number): MediaTimeline | null {
   const row = firstRow(db, `
     SELECT mi.id, mi.media_key, mi.title, mi.normalized_title, mi.media_type,
-      mi.tmdb_id, mi.imdb_id, mi.tvdb_id, mi.source_first_seen, mi.lifecycle_status,
+      mi.tmdb_id, mi.imdb_id, mi.tvdb_id, mi.thumbnail_url, mi.source_first_seen, mi.lifecycle_status,
       mi.available_at, mi.cleanup_after, mi.created_at, mi.updated_at,
       COUNT(me.id) AS event_count,
       MIN(me.timestamp) AS first_event_at,
@@ -154,10 +155,10 @@ function findOrCreateMediaTimeline(db: Database, event: LiveEvent): number | nul
   const now = new Date().toISOString();
   db.query(`
     INSERT INTO media_items (
-      media_key, title, normalized_title, media_type, tmdb_id, imdb_id, tvdb_id,
+      media_key, title, normalized_title, media_type, tmdb_id, imdb_id, tvdb_id, thumbnail_url,
       source_first_seen, lifecycle_status, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
   `, [
     identity.mediaKey,
     identity.title,
@@ -166,6 +167,7 @@ function findOrCreateMediaTimeline(db: Database, event: LiveEvent): number | nul
     identity.tmdbId,
     identity.imdbId,
     identity.tvdbId,
+    identity.thumbnailUrl,
     event.source,
     now,
     now,
@@ -189,6 +191,7 @@ function updateMediaMetadata(
       tmdb_id = COALESCE(?, tmdb_id),
       imdb_id = COALESCE(?, imdb_id),
       tvdb_id = COALESCE(?, tvdb_id),
+      thumbnail_url = COALESCE(?, thumbnail_url),
       source_first_seen = COALESCE(source_first_seen, ?),
       updated_at = ?
     WHERE id = ?
@@ -199,6 +202,7 @@ function updateMediaMetadata(
     identity.tmdbId,
     identity.imdbId,
     identity.tvdbId,
+    identity.thumbnailUrl,
     event.source,
     new Date().toISOString(),
     mediaItemId,
@@ -299,15 +303,16 @@ function mapMediaTimeline(row: unknown[]): MediaTimeline {
     tmdbId: row[5] === null ? null : String(row[5]),
     imdbId: row[6] === null ? null : String(row[6]),
     tvdbId: row[7] === null ? null : String(row[7]),
-    sourceFirstSeen: row[8] === null ? null : String(row[8]),
-    lifecycleStatus: String(row[9]),
-    availableAt: row[10] === null ? null : String(row[10]),
-    cleanupAfter: row[11] === null ? null : String(row[11]),
-    createdAt: String(row[12]),
-    updatedAt: String(row[13]),
-    eventCount: Number(row[14]),
-    firstEventAt: row[15] === null ? null : String(row[15]),
-    lastEventAt: row[16] === null ? null : String(row[16]),
+    thumbnailUrl: row[8] === null ? null : String(row[8]),
+    sourceFirstSeen: row[9] === null ? null : String(row[9]),
+    lifecycleStatus: String(row[10]),
+    availableAt: row[11] === null ? null : String(row[11]),
+    cleanupAfter: row[12] === null ? null : String(row[12]),
+    createdAt: String(row[13]),
+    updatedAt: String(row[14]),
+    eventCount: Number(row[15]),
+    firstEventAt: row[16] === null ? null : String(row[16]),
+    lastEventAt: row[17] === null ? null : String(row[17]),
   };
 }
 

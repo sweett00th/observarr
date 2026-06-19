@@ -106,6 +106,7 @@ type MediaTimeline = {
   mediaKey: string;
   mediaType: string | null;
   title: string;
+  thumbnailUrl: string | null;
   source: string | null;
   status: string;
   eventCount: number;
@@ -166,16 +167,36 @@ function App() {
       return;
     }
 
-    fetch("/api/admin/overview")
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`Overview returned ${response.status}`);
-        }
+    let cancelled = false;
 
-        return response.json() as Promise<OverviewResponse>;
-      })
-      .then(setOverview)
-      .catch(() => setOverview(null));
+    function refreshOverview() {
+      fetch("/api/admin/overview")
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`Overview returned ${response.status}`);
+          }
+
+          return response.json() as Promise<OverviewResponse>;
+        })
+        .then((data) => {
+          if (!cancelled) {
+            setOverview(data);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setOverview(null);
+          }
+        });
+    }
+
+    refreshOverview();
+    const interval = window.setInterval(refreshOverview, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, [user]);
 
   function fetchVersion() {
@@ -644,17 +665,45 @@ function MediaTimelinesPage({
   const [events, setEvents] = useState<MediaTimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    fetch("/api/media-timelines")
-      .then((response) => response.json() as Promise<{ ok: boolean; media: MediaTimeline[] }>)
-      .then((data) => {
-        setItems(data.media);
-        const nextId = selectedMediaId ?? data.media[0]?.id ?? null;
-        onSelectMedia(nextId);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+    let cancelled = false;
+
+    function refreshItems() {
+      fetch("/api/media-timelines")
+        .then((response) => response.json() as Promise<{ ok: boolean; media: MediaTimeline[] }>)
+        .then((data) => {
+          if (cancelled) {
+            return;
+          }
+
+          setItems(data.media);
+
+          if (!selectedMediaId && data.media[0]) {
+            onSelectMedia(data.media[0].id);
+          }
+
+          if (selectedMediaId && !data.media.some((item) => item.id === selectedMediaId)) {
+            onSelectMedia(data.media[0]?.id ?? null);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+          }
+        });
+    }
+
+    refreshItems();
+    const interval = window.setInterval(refreshItems, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [onSelectMedia, selectedMediaId]);
 
   useEffect(() => {
     if (!selectedMediaId) {
@@ -663,22 +712,86 @@ function MediaTimelinesPage({
       return;
     }
 
-    fetch(`/api/media-timelines/${selectedMediaId}`)
-      .then((response) => response.json() as Promise<{
-        ok: boolean;
-        media: MediaTimeline;
-        events: MediaTimelineEvent[];
-      }>)
-      .then((data) => {
-        setSelected(data.media);
-        setEvents(data.events);
-      });
+    let cancelled = false;
+
+    function refreshSelectedTimeline() {
+      fetch(`/api/media-timelines/${selectedMediaId}`)
+        .then((response) => response.json() as Promise<{
+          ok: boolean;
+          media: MediaTimeline;
+          events: MediaTimelineEvent[];
+        }>)
+        .then((data) => {
+          if (!cancelled) {
+            setSelected(data.media);
+            setEvents(data.events);
+          }
+        });
+    }
+
+    refreshSelectedTimeline();
+    const interval = window.setInterval(refreshSelectedTimeline, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, [selectedMediaId]);
 
   const filteredItems = items.filter((item) =>
     `${item.title} ${item.mediaType ?? ""} ${item.source ?? ""}`.toLowerCase().includes(search.toLowerCase())
   );
   const sortedEvents = [...events].sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+  const filteredIds = filteredItems.map((item) => item.id);
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.includes(id));
+
+  function toggleSelected(id: number) {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((currentId) => currentId !== id) : [...current, id]
+    );
+  }
+
+  function toggleAllFiltered() {
+    setSelectedIds((current) => {
+      if (allFilteredSelected) {
+        return current.filter((id) => !filteredIds.includes(id));
+      }
+
+      return [...new Set([...current, ...filteredIds])];
+    });
+  }
+
+  async function deleteSelected() {
+    if (selectedIds.length === 0) {
+      return;
+    }
+
+    setDeleting(true);
+
+    try {
+      const response = await fetch("/api/media-timelines", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Delete failed");
+      }
+
+      const remaining = items.filter((item) => !selectedIds.includes(item.id));
+      setItems(remaining);
+      setSelectedIds([]);
+
+      if (selectedMediaId && selectedIds.includes(selectedMediaId)) {
+        onSelectMedia(remaining[0]?.id ?? null);
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <Container maxWidth="xl" sx={{ py: 4 }}>
@@ -717,6 +830,29 @@ function MediaTimelinesPage({
                         onChange={(event) => setSearch(event.target.value)}
                         fullWidth
                       />
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              size="small"
+                              checked={allFilteredSelected}
+                              indeterminate={selectedIds.length > 0 && !allFilteredSelected}
+                              onChange={toggleAllFiltered}
+                            />
+                          }
+                          label="Select visible"
+                          sx={{ flexGrow: 1 }}
+                        />
+                        <Button
+                          size="small"
+                          color="error"
+                          variant="outlined"
+                          disabled={selectedIds.length === 0 || deleting}
+                          onClick={deleteSelected}
+                        >
+                          Delete {selectedIds.length || ""}
+                        </Button>
+                      </Stack>
                       <Stack spacing={1} sx={{ overflowY: "auto", pr: 0.5 }}>
                         {filteredItems.map((item) => (
                           <Card
@@ -730,14 +866,26 @@ function MediaTimelinesPage({
                             }}
                           >
                             <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                              <Stack spacing={0.5}>
-                                <Typography variant="subtitle1">{item.title}</Typography>
-                                <Typography variant="body2" color="text.secondary">
-                                  {item.mediaType ?? "media"} · {item.eventCount} events
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  Last: {item.lastEventAt ? new Date(item.lastEventAt).toLocaleString() : "None"}
-                                </Typography>
+                              <Stack direction="row" spacing={1.5} alignItems="center">
+                                <Checkbox
+                                  size="small"
+                                  checked={selectedIds.includes(item.id)}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onChange={() => toggleSelected(item.id)}
+                                  sx={{ p: 0 }}
+                                />
+                                <MediaThumbnail item={item} />
+                                <Stack spacing={0.5} sx={{ minWidth: 0 }}>
+                                  <Typography variant="subtitle1" noWrap>
+                                    {item.title}
+                                  </Typography>
+                                  <Typography variant="body2" color="text.secondary">
+                                    {item.mediaType ?? "media"} · {item.eventCount} events
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary" noWrap>
+                                    Last: {item.lastEventAt ? new Date(item.lastEventAt).toLocaleString() : "None"}
+                                  </Typography>
+                                </Stack>
                               </Stack>
                             </CardContent>
                           </Card>
@@ -768,6 +916,51 @@ function MediaTimelinesPage({
         )}
       </Stack>
     </Container>
+  );
+}
+
+function MediaThumbnail({ item }: { item: MediaTimeline }) {
+  const [failed, setFailed] = useState(false);
+  const label = item.title.trim().charAt(0).toUpperCase() || "?";
+
+  if (item.thumbnailUrl && !failed) {
+    return (
+      <Box
+        component="img"
+        src={item.thumbnailUrl}
+        alt=""
+        onError={() => setFailed(true)}
+        sx={{
+          width: 48,
+          height: 64,
+          borderRadius: 1,
+          objectFit: "cover",
+          bgcolor: "grey.100",
+          border: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
+
+  return (
+    <Box
+      sx={{
+        width: 48,
+        height: 64,
+        borderRadius: 1,
+        bgcolor: "primary.main",
+        color: "primary.contrastText",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontWeight: 700,
+        flexShrink: 0,
+      }}
+    >
+      {label}
+    </Box>
   );
 }
 

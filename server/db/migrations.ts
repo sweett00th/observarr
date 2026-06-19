@@ -201,6 +201,13 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 4,
+    name: "media_timeline_thumbnails",
+    sql: `
+      ALTER TABLE media_items ADD COLUMN thumbnail_url TEXT;
+    `,
+  },
 ];
 
 export function runMigrations(db: DB): void {
