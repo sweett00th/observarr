@@ -24,6 +24,7 @@ Current durable architecture decisions:
 - Initial admin bootstrap uses `ADMIN_USERNAME` and `ADMIN_PASSWORD` only when no users exist. Never create a hardcoded default admin password, and never log passwords.
 - Do not add SSO, OAuth, Auth0, Google login, or any third-party identity provider.
 - The Event Console is intentionally ephemeral and in-memory only. Do not add an events table, event migrations, or persistent event logging unless explicitly requested.
+- Tracked media is the explicit persistence exception: once an admin selects `Track media`, matching future webhook events may be persisted to `tracked_media_events` for that media timeline.
 - External services push live events into `sms-gateway` through webhook endpoints or scripts. Do not poll Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, or other app APIs for the Event Console unless explicitly requested.
 - `tools/mock-events.ts` is a local development helper that posts synthetic events into webhook endpoints. Keep it dev-only; it is not production polling or event ingestion logic.
 - Internal port defaults to `3020`.

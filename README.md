@@ -11,6 +11,7 @@ No Twilio sending is implemented yet.
 - Persistence: single local SQLite database
 - Auth: local username/password with server-side SQLite sessions
 - Live events: ephemeral in-memory Event Console streamed with Server-Sent Events
+- Tracked media: selected media timelines persisted for audit and gap analysis
 - Production: one Docker container
 - Image: `ghcr.io/sweett00th/sms-gateway`
 - Unraid template: `templates/sms-gateway.xml`
@@ -86,6 +87,9 @@ npm --prefix client run typecheck
 - `GET /api/admin/overview` returns SQLite-backed dashboard counts and provider configuration status. It requires login.
 - `GET /api/events/recent` returns current in-memory Event Console events. It requires login.
 - `GET /api/events/stream` streams live Event Console events with Server-Sent Events. It requires login.
+- `GET /api/tracked-media` lists persisted tracked media timelines. It requires login.
+- `POST /api/tracked-media/from-event` starts tracking media from a live event in the Event Console. It requires login.
+- `GET /api/tracked-media/:id` returns a tracked media timeline. It requires login.
 - `POST /webhook/test` accepts JSON, logs a summary, emits a live test event, and returns the summary. It does not send SMS.
 - `POST /webhook/jellyfin`, `/webhook/seerr`, `/webhook/radarr`, `/webhook/sonarr`, and `/webhook/sabnzbd` accept JSON and emit normalized live events. They do not send SMS.
 
@@ -112,6 +116,8 @@ Events are intentionally ephemeral and in-memory only:
 - Events are lost when the container restarts.
 - The server keeps only a short runtime ring buffer.
 
+The exception is explicit tracked media. When an admin clicks `Track media` on a live event, the app creates or updates a tracked media record and persists that event to the media timeline. Future webhook events matching the same derived media key are persisted to that timeline. Untracked live events remain ephemeral.
+
 The default ring buffer keeps events from the last `10` minutes and caps the list at `250` events. Override those with:
 
 ```env
@@ -124,6 +130,19 @@ External apps still need to be configured to push webhooks into this app. This f
 
 The console supports source filters for Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, and System/Test. Webhook payloads are normalized into compact events. Expanding an event row shows the sanitized raw webhook payload. Obvious secret-looking fields such as tokens, passwords, API keys, and authorization headers are recursively redacted. If the sanitized raw payload exceeds `EVENT_RAW_MAX_BYTES`, the expanded view shows a truncated preview with byte metadata.
 
+## Tracked Media
+
+The dashboard includes a `Tracked Media` widget. Open it to see media items selected from the Event Console. The page has a searchable media list, a scrollable sorted event list for the selected item, and a horizontal timeline graph with source-colored dots. Hover over a dot to see event details and the gap from the previous step.
+
+Tracking starts from a live event:
+
+1. Open the Event Console.
+2. Find a media-related event.
+3. Click `Track media`.
+4. Open the timeline from the row or the dashboard widget.
+
+Media matching is intentionally simple in this pass. The app derives a media key from common fields such as `movie.title`, `series.title`, `tmdbId`, `imdbId`, `tvdbId`, `title`, `subject`, and media type hints. Source-specific matching can be improved later as real payload samples arrive.
+
 For local development, the repo includes a mock webhook event generator. It posts synthetic Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, and test events into the same webhook endpoints external apps use:
 
 ```powershell
@@ -135,6 +154,8 @@ Send one event and exit:
 ```powershell
 deno task mock:events:once
 ```
+
+The tool emits realistic multi-step media journeys. A movie flow looks like Seerr request, Seerr approval, Radarr grab, SABnzbd download, Radarr import, Seerr available, Jellyfin library update, and Jellyfin playback. Series flows use Sonarr in the equivalent steps. Events in one journey share media IDs/titles so tracked-media timelines can reconstruct end-to-end behavior.
 
 The tool reads `.env`, sends `SHARED_SECRET` as `x-sms-secret` when set, and defaults to `http://localhost:$PORT`. Optional local knobs:
 
@@ -153,7 +174,7 @@ The app stores local state in one SQLite database file. By default:
 
 Override it with `DB_PATH`. In Unraid, `/mnt/user/appdata/sms-gateway` is mounted to `/data`, so the database survives container updates.
 
-Migrations run automatically on startup and are tracked in `schema_migrations`. Current tables include `users`, `sessions`, `message_receipts`, `notification_profiles`, `event_templates`, `provider_settings`, and `webhook_events`.
+Migrations run automatically on startup and are tracked in `schema_migrations`. Current tables include `users`, `sessions`, `message_receipts`, `notification_profiles`, `event_templates`, `provider_settings`, `webhook_events`, `tracked_media`, and `tracked_media_events`.
 
 To reset the app in local development, stop the server and delete the SQLite file you used for `DB_PATH`, for example:
 

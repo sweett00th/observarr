@@ -83,6 +83,41 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 2,
+    name: "tracked_media_timelines",
+    sql: `
+      CREATE TABLE tracked_media (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_key TEXT NOT NULL UNIQUE,
+        media_type TEXT,
+        title TEXT NOT NULL,
+        source TEXT,
+        status TEXT NOT NULL DEFAULT 'tracking',
+        created_from_event_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE tracked_media_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tracked_media_id INTEGER NOT NULL,
+        live_event_id TEXT,
+        timestamp TEXT NOT NULL,
+        source TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        raw_payload TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (tracked_media_id) REFERENCES tracked_media(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX tracked_media_events_media_id_idx ON tracked_media_events(tracked_media_id);
+      CREATE INDEX tracked_media_events_timestamp_idx ON tracked_media_events(timestamp);
+    `,
+  },
 ];
 
 export function runMigrations(db: DB): void {

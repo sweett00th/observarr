@@ -46,6 +46,11 @@ class EventBus {
     return [...this.#events];
   }
 
+  findById(id: string): LiveEvent | null {
+    this.#prune();
+    return this.#events.find((event) => event.id === id) ?? null;
+  }
+
   publish(event: Omit<LiveEvent, "id" | "timestamp">): LiveEvent {
     const liveEvent: LiveEvent = {
       id: crypto.randomUUID(),

@@ -1,47 +1,44 @@
 type MockSource = "jellyfin" | "seerr" | "radarr" | "sonarr" | "sabnzbd" | "test";
+type MediaKind = "movie" | "series";
 
 type MockEvent = {
   source: MockSource;
   payload: Record<string, unknown>;
 };
 
-const sources: MockSource[] = ["jellyfin", "seerr", "radarr", "sonarr", "sabnzbd", "test"];
-const titles = [
-  "The Grand Budapest Hotel",
-  "Severance",
-  "Andor",
-  "The Expanse",
+type Journey = {
+  id: string;
+  kind: MediaKind;
+  title: string;
+  year: number;
+  externalId: number;
+  user: string;
+  quality: string;
+  step: number;
+  steps: Array<(journey: Journey) => MockEvent>;
+};
+
+const movieTitles = [
   "Arrival",
   "Blade Runner 2049",
-  "Silo",
   "Dune: Part Two",
+  "The Grand Budapest Hotel",
+  "No Country for Old Men",
 ];
+const seriesTitles = ["Severance", "Andor", "The Expanse", "Silo", "For All Mankind"];
 const users = ["alex", "jordan", "sam", "taylor", "morgan"];
-const quality = ["1080p", "2160p", "Bluray", "WEB-DL", "Remux"];
+const qualities = ["1080p WEB-DL", "2160p WEB-DL", "Bluray-1080p", "Remux-2160p"];
 
 const args = new Set(Deno.args);
 const once = args.has("--once");
 const intervalMs = readIntegerEnv("MOCK_EVENT_INTERVAL_MS", 2500);
 const baseUrl = getBaseUrl();
 const sharedSecret = Deno.env.get("SHARED_SECRET")?.trim();
+const activeJourneys: Journey[] = [];
 
 if (args.has("--help")) {
   printHelp();
   Deno.exit(0);
-}
-
-console.log(
-  `Mock webhook target: ${baseUrl} (${once ? "one event" : `every ${intervalMs}ms`})`,
-);
-
-if (once) {
-  await postMockEvent(createMockEvent());
-  Deno.exit(0);
-}
-
-while (true) {
-  await postMockEvent(createMockEvent());
-  await delay(intervalMs);
 }
 
 async function postMockEvent(event: MockEvent): Promise<void> {
@@ -57,108 +54,175 @@ async function postMockEvent(event: MockEvent): Promise<void> {
   const status = response.ok ? "ok" : "failed";
   console.log(
     `${new Date().toLocaleTimeString()} ${status} ${event.source} ${response.status} ${
-      String(event.payload.eventType || event.payload.NotificationType || "event")
-    }`,
+      String(event.payload.eventType || event.payload.notificationType || "event")
+    } ${String(event.payload.title || event.payload.subject || "")}`,
   );
 
   if (!response.ok) {
-    const body = await response.text();
-    console.log(body);
+    console.log(await response.text());
   }
 }
 
-function createMockEvent(): MockEvent {
-  const source = pick(sources);
-
-  if (source === "jellyfin") {
-    return {
-      source,
-      payload: {
-        eventType: pick(["PlaybackStart", "PlaybackStop", "ItemAdded", "ItemPlayed"]),
-        title: pick(titles),
-        message: `${pick(users)} ${pick(["started", "stopped", "finished"])} playback`,
-        userName: pick(users),
-        itemType: pick(["Movie", "Episode"]),
-      },
-    };
+function nextJourneyEvent(): MockEvent {
+  if (activeJourneys.length === 0 || Math.random() < 0.35) {
+    activeJourneys.push(createJourney());
   }
 
-  if (source === "seerr") {
-    return {
-      source,
-      payload: {
-        notificationType: pick(["MEDIA_PENDING", "MEDIA_APPROVED", "MEDIA_AVAILABLE"]),
-        subject: pick(titles),
-        message: `Request ${pick(["created", "approved", "became available"])}`,
-        requestedBy: pick(users),
-      },
-    };
+  const journey = pick(activeJourneys);
+  const event = journey.steps[journey.step](journey);
+  journey.step += 1;
+
+  if (journey.step >= journey.steps.length) {
+    activeJourneys.splice(activeJourneys.indexOf(journey), 1);
   }
 
-  if (source === "radarr") {
-    return {
-      source,
-      payload: {
-        eventType: pick(["MovieGrabbed", "MovieDownloaded", "MovieFileDelete", "HealthIssue"]),
-        movie: {
-          title: pick(titles),
-          year: pick([2016, 2019, 2021, 2024]),
-        },
-        quality: pick(quality),
-        message: pick(["Grabbed from indexer", "Download imported", "File deleted", "Health check warning"]),
-      },
-    };
-  }
+  return event;
+}
 
-  if (source === "sonarr") {
-    return {
-      source,
-      payload: {
-        eventType: pick(["EpisodeGrabbed", "Download", "SeriesDelete", "HealthIssue"]),
-        series: {
-          title: pick(titles),
-        },
-        episode: {
-          title: `Episode ${randomInt(1, 12)}`,
-          seasonNumber: randomInt(1, 4),
-          episodeNumber: randomInt(1, 12),
-        },
-        message: pick(["Episode grabbed", "Episode imported", "Series deleted", "Health issue detected"]),
-      },
-    };
-  }
-
-  if (source === "sabnzbd") {
-    return {
-      source,
-      payload: {
-        eventType: pick(["DownloadComplete", "DownloadFailed", "QueuePaused", "QueueResumed"]),
-        name: `${pick(titles)}.${pick(quality)}`,
-        status: pick(["Completed", "Failed", "Paused", "Running"]),
-        message: pick(["Job completed", "Job failed", "Queue paused", "Queue resumed"]),
-      },
-    };
-  }
+function createJourney(): Journey {
+  const kind: MediaKind = Math.random() < 0.55 ? "movie" : "series";
+  const title = kind === "movie" ? pick(movieTitles) : pick(seriesTitles);
+  const year = pick([2017, 2019, 2021, 2023, 2024, 2025]);
+  const externalId = randomInt(100000, 999999);
+  const base = {
+    id: crypto.randomUUID(),
+    kind,
+    title,
+    year,
+    externalId,
+    user: pick(users),
+    quality: pick(qualities),
+    step: 0,
+  };
 
   return {
-    source,
+    ...base,
+    steps: getJourneySteps(kind),
+  };
+}
+
+const movieJourneySteps: Journey["steps"] = [
+  (journey) => seerrEvent(journey, "MEDIA_PENDING", "Request submitted"),
+  (journey) => seerrEvent(journey, "MEDIA_APPROVED", "Request approved"),
+  (journey) => radarrEvent(journey, "MovieGrabbed", "Release grabbed from indexer"),
+  (journey) => sabnzbdEvent(journey, "DownloadStarted", "Download started"),
+  (journey) => sabnzbdEvent(journey, "DownloadComplete", "Download completed"),
+  (journey) => radarrEvent(journey, "MovieDownloaded", "Movie imported"),
+  (journey) => seerrEvent(journey, "MEDIA_AVAILABLE", "Media available"),
+  (journey) => jellyfinEvent(journey, "ItemAdded", "Library item added"),
+  (journey) => jellyfinEvent(journey, "PlaybackStart", `${journey.user} started playback`),
+];
+
+const seriesJourneySteps: Journey["steps"] = [
+  (journey) => seerrEvent(journey, "MEDIA_PENDING", "Series request submitted"),
+  (journey) => seerrEvent(journey, "MEDIA_APPROVED", "Series request approved"),
+  (journey) => sonarrEvent(journey, "EpisodeGrabbed", "Episode grabbed"),
+  (journey) => sabnzbdEvent(journey, "DownloadStarted", "Download started"),
+  (journey) => sabnzbdEvent(journey, "DownloadComplete", "Download completed"),
+  (journey) => sonarrEvent(journey, "Download", "Episode imported"),
+  (journey) => seerrEvent(journey, "MEDIA_AVAILABLE", "Series available"),
+  (journey) => jellyfinEvent(journey, "ItemAdded", "Episode added to library"),
+  (journey) => jellyfinEvent(journey, "PlaybackStart", `${journey.user} started playback`),
+];
+
+function getJourneySteps(kind: MediaKind): Journey["steps"] {
+  return kind === "movie" ? movieJourneySteps : seriesJourneySteps;
+}
+
+function seerrEvent(journey: Journey, notificationType: string, message: string): MockEvent {
+  return {
+    source: "seerr",
     payload: {
-      eventType: pick(["hello", "heartbeat", "warning", "error"]),
-      title: "Mock test event",
-      message: pick(["Live console check", "Synthetic event", "Filter test", "SSE test"]),
-      token: "mock-secret-should-redact",
+      notificationType,
+      subject: journey.title,
+      title: journey.title,
+      mediaType: journey.kind,
+      tmdbId: journey.kind === "movie" ? journey.externalId : undefined,
+      tvdbId: journey.kind === "series" ? journey.externalId : undefined,
+      year: journey.year,
+      requestedBy: journey.user,
+      message,
+      requestId: journey.id,
+    },
+  };
+}
+
+function radarrEvent(journey: Journey, eventType: string, message: string): MockEvent {
+  return {
+    source: "radarr",
+    payload: {
+      eventType,
+      mediaType: "movie",
+      movie: {
+        title: journey.title,
+        year: journey.year,
+        tmdbId: journey.externalId,
+      },
+      quality: journey.quality,
+      downloadClient: "SABnzbd",
+      message,
+    },
+  };
+}
+
+function sonarrEvent(journey: Journey, eventType: string, message: string): MockEvent {
+  return {
+    source: "sonarr",
+    payload: {
+      eventType,
+      mediaType: "series",
+      series: {
+        title: journey.title,
+        year: journey.year,
+        tvdbId: journey.externalId,
+      },
+      episode: {
+        title: `Episode ${randomInt(1, 10)}`,
+        seasonNumber: 1,
+        episodeNumber: randomInt(1, 10),
+      },
+      quality: journey.quality,
+      downloadClient: "SABnzbd",
+      message,
+    },
+  };
+}
+
+function sabnzbdEvent(journey: Journey, eventType: string, message: string): MockEvent {
+  return {
+    source: "sabnzbd",
+    payload: {
+      eventType,
+      title: journey.title,
+      mediaType: journey.kind,
+      tmdbId: journey.kind === "movie" ? journey.externalId : undefined,
+      tvdbId: journey.kind === "series" ? journey.externalId : undefined,
+      name: `${journey.title}.${journey.quality.replaceAll(" ", ".")}`,
+      status: eventType === "DownloadComplete" ? "Completed" : "Downloading",
+      message,
+    },
+  };
+}
+
+function jellyfinEvent(journey: Journey, eventType: string, message: string): MockEvent {
+  return {
+    source: "jellyfin",
+    payload: {
+      eventType,
+      title: journey.title,
+      mediaType: journey.kind,
+      tmdbId: journey.kind === "movie" ? journey.externalId : undefined,
+      tvdbId: journey.kind === "series" ? journey.externalId : undefined,
+      itemType: journey.kind === "movie" ? "Movie" : "Episode",
+      userName: journey.user,
+      message,
     },
   };
 }
 
 function getBaseUrl(): string {
   const explicitUrl = Deno.env.get("WEBHOOK_BASE_URL")?.trim();
-
-  if (explicitUrl) {
-    return explicitUrl.replace(/\/+$/, "");
-  }
-
-  return `http://localhost:${Deno.env.get("PORT")?.trim() || "3020"}`;
+  return explicitUrl ? explicitUrl.replace(/\/+$/, "") : `http://localhost:${Deno.env.get("PORT")?.trim() || "3020"}`;
 }
 
 function readIntegerEnv(name: string, fallback: number): number {
@@ -198,3 +262,21 @@ Environment:
   MOCK_EVENT_INTERVAL_MS    Continuous mode interval. Defaults to 2500.
 `);
 }
+
+async function main(): Promise<void> {
+  console.log(
+    `Mock webhook target: ${baseUrl} (${once ? "one event" : `every ${intervalMs}ms`})`,
+  );
+
+  if (once) {
+    await postMockEvent(nextJourneyEvent());
+    return;
+  }
+
+  while (true) {
+    await postMockEvent(nextJourneyEvent());
+    await delay(intervalMs);
+  }
+}
+
+await main();

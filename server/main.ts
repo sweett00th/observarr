@@ -6,7 +6,8 @@ import { createAdminRoutes } from "./routes/admin.ts";
 import { createAuthRoutes } from "./routes/auth.ts";
 import { createEventRoutes } from "./routes/events.ts";
 import health from "./routes/health.ts";
-import webhooks from "./routes/webhooks.ts";
+import { createTrackedMediaRoutes } from "./routes/trackedMedia.ts";
+import { createWebhookRoutes } from "./routes/webhooks.ts";
 import { getPort, getSharedSecret } from "./lib/config.ts";
 
 const db = await initializeDatabase();
@@ -36,9 +37,11 @@ app.route("/", health);
 app.route("/api/auth", createAuthRoutes(db));
 app.use("/api/admin/*", requireAdmin(db));
 app.use("/api/events/*", requireAdmin(db));
+app.use("/api/tracked-media/*", requireAdmin(db));
 app.route("/api/events", createEventRoutes());
+app.route("/api/tracked-media", createTrackedMediaRoutes(db));
 app.route("/api", createAdminRoutes(db));
-app.route("/webhook", webhooks);
+app.route("/webhook", createWebhookRoutes(db));
 
 app.use("/*", serveStatic({ root: "./client/dist" }));
 

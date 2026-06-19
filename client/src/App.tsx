@@ -1,6 +1,7 @@
 import LogoutIcon from "@mui/icons-material/Logout";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
+import TimelineIcon from "@mui/icons-material/Timeline";
 import SettingsIcon from "@mui/icons-material/Settings";
 import SmsIcon from "@mui/icons-material/Sms";
 import StorageIcon from "@mui/icons-material/Storage";
@@ -29,7 +30,13 @@ import {
   Typography,
   createTheme,
 } from "@mui/material";
-import { FormEvent, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useState,
+} from "react";
 
 type VersionResponse = {
   ok: boolean;
@@ -66,6 +73,7 @@ type OverviewResponse = {
     profiles: number;
     templates: number;
     users: number;
+    trackedMedia: number;
   };
   providerConfigured: boolean;
 };
@@ -93,6 +101,32 @@ type LiveEvent = {
   rawPayload?: unknown;
 };
 
+type TrackedMedia = {
+  id: number;
+  mediaKey: string;
+  mediaType: string | null;
+  title: string;
+  source: string | null;
+  status: string;
+  eventCount: number;
+  firstEventAt: string | null;
+  lastEventAt: string | null;
+};
+
+type TrackedMediaEvent = {
+  id: number;
+  trackedMediaId: number;
+  liveEventId: string | null;
+  timestamp: string;
+  source: EventSourceName;
+  eventType: string;
+  severity: "info" | "success" | "warning" | "error";
+  title: string;
+  message: string;
+  rawPayload: unknown;
+  createdAt: string;
+};
+
 const theme = createTheme({
   palette: {
     mode: "light",
@@ -118,6 +152,8 @@ function App() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [page, setPage] = useState<"dashboard" | "tracked-media">("dashboard");
+  const [selectedTrackedMediaId, setSelectedTrackedMediaId] = useState<number | null>(null);
 
   useEffect(() => {
     fetchVersion();
@@ -246,8 +282,22 @@ function App() {
           <Stack alignItems="center" justifyContent="center" sx={{ minHeight: "70vh" }}>
             <CircularProgress />
           </Stack>
+        ) : user && page === "tracked-media" ? (
+          <TrackedMediaPage
+            selectedMediaId={selectedTrackedMediaId}
+            onSelectMedia={setSelectedTrackedMediaId}
+            onBack={() => setPage("dashboard")}
+          />
         ) : user ? (
-          <Dashboard version={version} status={backendStatus} overview={overview} />
+          <Dashboard
+            version={version}
+            status={backendStatus}
+            overview={overview}
+            onOpenTrackedMedia={(id) => {
+              setSelectedTrackedMediaId(id);
+              setPage("tracked-media");
+            }}
+          />
         ) : (
           <LoginScreen
             authStatus={authStatus}
@@ -294,8 +344,8 @@ function ProfileDrawer({
       return;
     }
 
-    if (newPassword.length < 6) {
-      setError("New password must be at least 6 characters");
+    if (newPassword.length < 12) {
+      setError("New password must be at least 12 characters");
       return;
     }
 
@@ -458,12 +508,20 @@ function Dashboard({
   version,
   status,
   overview,
+  onOpenTrackedMedia,
 }: {
   version: VersionResponse | null;
   status: "loading" | "online" | "error";
   overview: OverviewResponse | null;
+  onOpenTrackedMedia: (id: number | null) => void;
 }) {
   const placeholders = [
+    {
+      title: "Tracked Media",
+      body: `${overview?.counts.trackedMedia ?? 0} media timelines tracked.`,
+      icon: <TimelineIcon />,
+      action: () => onOpenTrackedMedia(null),
+    },
     {
       title: "Message Receipts",
       body: `${overview?.counts.receipts ?? 0} receipts stored.`,
@@ -550,18 +608,380 @@ function Dashboard({
                     <Typography variant="h6" component="h2">
                       {item.title}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {item.body}
-                    </Typography>
-                  </Stack>
-                </CardContent>
-              </Card>
+                  <Typography variant="body2" color="text.secondary">
+                    {item.body}
+                  </Typography>
+                  {"action" in item && item.action && (
+                    <Button size="small" variant="outlined" onClick={item.action}>
+                      Open
+                    </Button>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
             </Grid>
           ))}
         </Grid>
       </Container>
-      <EventConsole />
+      <EventConsole onOpenTrackedMedia={onOpenTrackedMedia} />
     </>
+  );
+}
+
+function TrackedMediaPage({
+  selectedMediaId,
+  onSelectMedia,
+  onBack,
+}: {
+  selectedMediaId: number | null;
+  onSelectMedia: (id: number | null) => void;
+  onBack: () => void;
+}) {
+  const [items, setItems] = useState<TrackedMedia[]>([]);
+  const [selected, setSelected] = useState<TrackedMedia | null>(null);
+  const [events, setEvents] = useState<TrackedMediaEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    fetch("/api/tracked-media")
+      .then((response) => response.json() as Promise<{ ok: boolean; media: TrackedMedia[] }>)
+      .then((data) => {
+        setItems(data.media);
+        const nextId = selectedMediaId ?? data.media[0]?.id ?? null;
+        onSelectMedia(nextId);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedMediaId) {
+      setSelected(null);
+      setEvents([]);
+      return;
+    }
+
+    fetch(`/api/tracked-media/${selectedMediaId}`)
+      .then((response) => response.json() as Promise<{
+        ok: boolean;
+        media: TrackedMedia;
+        events: TrackedMediaEvent[];
+      }>)
+      .then((data) => {
+        setSelected(data.media);
+        setEvents(data.events);
+      });
+  }, [selectedMediaId]);
+
+  const filteredItems = items.filter((item) =>
+    `${item.title} ${item.mediaType ?? ""} ${item.source ?? ""}`.toLowerCase().includes(search.toLowerCase())
+  );
+  const sortedEvents = [...events].sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+
+  return (
+    <Container maxWidth="xl" sx={{ py: 4 }}>
+      <Stack spacing={3}>
+        <Stack direction="row" spacing={2} alignItems="center">
+          <Button variant="outlined" onClick={onBack}>
+            Back
+          </Button>
+          <Box>
+            <Typography variant="h5" component="h2">
+              Tracked Media
+            </Typography>
+            <Typography color="text.secondary">
+              Persistent timelines for media selected from live webhook events.
+            </Typography>
+          </Box>
+        </Stack>
+
+        {loading ? (
+          <CircularProgress />
+        ) : items.length === 0 ? (
+          <Alert severity="info">
+            No tracked media yet. Open the Event Console and choose Track this media on a media event.
+          </Alert>
+        ) : (
+          <Stack spacing={3}>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={4}>
+                <Card variant="outlined" sx={{ height: 560 }}>
+                  <CardContent sx={{ height: "100%" }}>
+                    <Stack spacing={2} sx={{ height: "100%" }}>
+                      <TextField
+                        size="small"
+                        label="Search tracked media"
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        fullWidth
+                      />
+                      <Stack spacing={1} sx={{ overflowY: "auto", pr: 0.5 }}>
+                        {filteredItems.map((item) => (
+                          <Card
+                            key={item.id}
+                            variant="outlined"
+                            onClick={() => onSelectMedia(item.id)}
+                            sx={{
+                              cursor: "pointer",
+                              borderColor: item.id === selectedMediaId ? "primary.main" : undefined,
+                              bgcolor: item.id === selectedMediaId ? "action.selected" : undefined,
+                            }}
+                          >
+                            <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
+                              <Stack spacing={0.5}>
+                                <Typography variant="subtitle1">{item.title}</Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                  {item.mediaType ?? "media"} · {item.eventCount} events
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  Last: {item.lastEventAt ? new Date(item.lastEventAt).toLocaleString() : "None"}
+                                </Typography>
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </Stack>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              <Grid item xs={12} md={8}>
+                {selected ? (
+                  <TrackedMediaEventList media={selected} events={sortedEvents} />
+                ) : (
+                  <Alert severity="info">Select a tracked item.</Alert>
+                )}
+              </Grid>
+            </Grid>
+
+            {selected && (
+              <Grid container spacing={3}>
+                <Grid item xs={12}>
+                  <TrackedMediaTimelineGraph media={selected} events={sortedEvents} />
+                </Grid>
+              </Grid>
+            )}
+          </Stack>
+        )}
+      </Stack>
+    </Container>
+  );
+}
+
+function TrackedMediaEventList({
+  media,
+  events,
+}: {
+  media: TrackedMedia;
+  events: TrackedMediaEvent[];
+}) {
+  return (
+    <Card variant="outlined" sx={{ height: 560 }}>
+      <CardContent>
+        <Stack spacing={2}>
+          <Stack spacing={0.5}>
+            <Typography variant="h6" component="h3">
+              {media.title}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {media.mediaType ?? "media"} · {media.status} · {events.length} persisted events
+            </Typography>
+          </Stack>
+
+          {events.length === 0 ? (
+            <Alert severity="info">No timeline events have been captured yet.</Alert>
+          ) : (
+            <Stack spacing={0} sx={{ maxHeight: 450, overflowY: "auto", pr: 1 }}>
+              {events.map((event, index) => {
+                const previous = events[index - 1];
+                const gapMs = previous
+                  ? Date.parse(event.timestamp) - Date.parse(previous.timestamp)
+                  : 0;
+
+                return (
+                  <Box key={event.id}>
+                    {previous && (
+                      <Typography
+                        variant="caption"
+                        color={gapMs > 10 * 60 * 1000 ? "warning.main" : "text.secondary"}
+                        sx={{ display: "block", ml: 5, my: 1 }}
+                      >
+                        Gap: {formatDuration(gapMs)}
+                      </Typography>
+                    )}
+                    <Stack direction="row" spacing={2} alignItems="flex-start">
+                      <Box
+                        sx={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: "50%",
+                          bgcolor: sourceColors[event.source] ?? "grey.500",
+                          mt: 0.5,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Box sx={{ flexGrow: 1, pb: 2, borderBottom: "1px solid", borderColor: "divider" }}>
+                        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: "wrap" }}>
+                          <Chip size="small" label={sourceLabels[event.source] ?? event.source} />
+                          <Chip size="small" label={event.eventType} variant="outlined" />
+                          <Typography variant="caption" color="text.secondary">
+                            {new Date(event.timestamp).toLocaleString()}
+                          </Typography>
+                        </Stack>
+                        <Typography sx={{ mt: 1 }}>{event.title}</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {event.message}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Box>
+                );
+              })}
+            </Stack>
+          )}
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+function TrackedMediaTimelineGraph({
+  media,
+  events,
+}: {
+  media: TrackedMedia;
+  events: TrackedMediaEvent[];
+}) {
+  if (events.length === 0) {
+    return null;
+  }
+
+  const start = Date.parse(events[0].timestamp);
+  const end = Date.parse(events[events.length - 1].timestamp);
+  const axisPaddingPercent = 3;
+  const axisStart = start;
+  const axisEnd = Math.max(end, start + 30000);
+  const axisSpan = axisEnd - axisStart;
+
+  function eventPosition(timestamp: string): number {
+    if (events.length === 1) {
+      return 50;
+    }
+
+    const raw = ((Date.parse(timestamp) - axisStart) / axisSpan) * 100;
+    return axisPaddingPercent + (raw * (100 - axisPaddingPercent * 2)) / 100;
+  }
+
+  return (
+    <Card variant="outlined">
+      <CardContent>
+        <Stack spacing={2}>
+          <Stack direction="row" alignItems="baseline" spacing={1}>
+            <Typography variant="h6" component="h3">
+              Timeline Graph
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {media.title} · end-to-end {formatDuration(Math.max(0, end - start))}
+            </Typography>
+          </Stack>
+          <Box sx={{ position: "relative", height: 210, mx: 1, mt: 2, overflow: "hidden" }}>
+            <Box
+              sx={{
+                position: "absolute",
+                left: `${axisPaddingPercent}%`,
+                right: `${axisPaddingPercent}%`,
+                top: 62,
+                height: 3,
+                bgcolor: "divider",
+              }}
+            />
+            {events.map((event, index) => {
+              const percent = eventPosition(event.timestamp);
+              const previous = events[index - 1];
+              const gapMs = previous ? Date.parse(event.timestamp) - Date.parse(previous.timestamp) : 0;
+
+              return (
+                <Tooltip
+                  key={event.id}
+                  arrow
+                  title={
+                    <Stack spacing={0.5}>
+                      <Typography variant="caption">{new Date(event.timestamp).toLocaleString()}</Typography>
+                      <Typography variant="body2">{sourceLabels[event.source]} · {event.eventType}</Typography>
+                      <Typography variant="body2">{event.title}</Typography>
+                      <Typography variant="caption">{event.message}</Typography>
+                      {previous && <Typography variant="caption">Since previous: {formatDuration(gapMs)}</Typography>}
+                    </Stack>
+                  }
+                >
+                  <Box
+                    component="span"
+                    sx={{
+                      position: "absolute",
+                      left: `${percent}%`,
+                      top: 50,
+                      transform: "translateX(-50%)",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 0.75,
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: "50%",
+                        bgcolor: sourceColors[event.source] ?? "grey.500",
+                        border: event.severity === "error" ? "3px solid #ef4444" : "3px solid white",
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+                      }}
+                    />
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                        whiteSpace: "nowrap",
+                        transform: index % 2 === 0 ? "translateY(0)" : "translateY(24px)",
+                        textAlign: "center",
+                      }}
+                    >
+                      {sourceLabels[event.source]}
+                      <br />
+                      {new Date(event.timestamp).toLocaleTimeString([], {
+                        hour: "numeric",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </Typography>
+                  </Box>
+                </Tooltip>
+              );
+            })}
+          </Box>
+          <Stack direction="row" spacing={2} sx={{ flexWrap: "wrap", gap: 1 }}>
+            {Object.entries(sourceLabels)
+              .filter(([source]) => events.some((event) => event.source === source))
+              .map(([source, label]) => (
+                <Stack key={source} direction="row" spacing={0.75} alignItems="center">
+                  <Box
+                    sx={{
+                      width: 10,
+                      height: 10,
+                      borderRadius: "50%",
+                      bgcolor: sourceColors[source as EventSourceName],
+                    }}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    {label}
+                  </Typography>
+                </Stack>
+              ))}
+          </Stack>
+        </Stack>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -594,7 +1014,11 @@ const sourceLabels: Record<EventSourceName, string> = {
   test: "Test",
 };
 
-function EventConsole() {
+function EventConsole({
+  onOpenTrackedMedia,
+}: {
+  onOpenTrackedMedia: (id: number | null) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [drawerHeight, setDrawerHeight] = useState(() => {
     const savedHeight = Number(localStorage.getItem("sms-gateway:event-console-height"));
@@ -660,7 +1084,12 @@ function EventConsole() {
     }));
   }
 
-  function handleResizeStart(event: React.PointerEvent<HTMLDivElement>) {
+  function clearVisibleEvents(event: ReactMouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+    setEvents([]);
+  }
+
+  function handleResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
 
@@ -723,6 +1152,9 @@ function EventConsole() {
           variant="outlined"
         />
         <Box sx={{ flexGrow: 1 }} />
+        <Button size="small" sx={{ color: "#d1d5db" }} onClick={clearVisibleEvents}>
+          Clear
+        </Button>
         <Button size="small" sx={{ color: "#d1d5db" }}>
           {expanded ? "Collapse" : "Expand"}
         </Button>
@@ -800,7 +1232,13 @@ function EventConsole() {
                 No events in the current filter.
               </Typography>
             ) : (
-              filteredEvents.map((event) => <EventRow key={event.id} event={event} />)
+              filteredEvents.map((event) => (
+                <EventRow
+                  key={event.id}
+                  event={event}
+                  onOpenTrackedMedia={onOpenTrackedMedia}
+                />
+              ))
             )}
           </Box>
         </Box>
@@ -809,8 +1247,17 @@ function EventConsole() {
   );
 }
 
-function EventRow({ event }: { event: LiveEvent }) {
+function EventRow({
+  event,
+  onOpenTrackedMedia,
+}: {
+  event: LiveEvent;
+  onOpenTrackedMedia: (id: number | null) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [tracking, setTracking] = useState(false);
+  const [trackedMediaId, setTrackedMediaId] = useState<number | null>(null);
+  const [trackError, setTrackError] = useState<string | null>(null);
   const [payloadHeight, setPayloadHeight] = useState(() => {
     const savedHeight = Number(localStorage.getItem("sms-gateway:event-payload-height"));
     return Number.isFinite(savedHeight) && savedHeight >= 120 ? savedHeight : 220;
@@ -824,7 +1271,7 @@ function EventRow({ event }: { event: LiveEvent }) {
     localStorage.setItem("sms-gateway:event-payload-height", String(payloadHeight));
   }, [payloadHeight]);
 
-  function handlePayloadResizeStart(event: React.PointerEvent<HTMLDivElement>) {
+  function handlePayloadResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
 
@@ -844,6 +1291,33 @@ function EventRow({ event }: { event: LiveEvent }) {
 
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
+  }
+
+  async function handleTrackMedia(clickEvent: ReactMouseEvent<HTMLButtonElement>) {
+    clickEvent.stopPropagation();
+    setTracking(true);
+    setTrackError(null);
+
+    try {
+      const response = await fetch("/api/tracked-media/from-event", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ eventId: event.id }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not track media");
+      }
+
+      setTrackedMediaId(data.media.id);
+    } catch (caughtError) {
+      setTrackError(caughtError instanceof Error ? caughtError.message : "Could not track media");
+    } finally {
+      setTracking(false);
+    }
   }
 
   return (
@@ -894,7 +1368,34 @@ function EventRow({ event }: { event: LiveEvent }) {
           {event.title}
           {event.message ? ` - ${event.message}` : ""}
         </Typography>
+        <Box sx={{ flexGrow: 1 }} />
+        {trackedMediaId ? (
+          <Button
+            size="small"
+            onClick={(clickEvent) => {
+              clickEvent.stopPropagation();
+              onOpenTrackedMedia(trackedMediaId);
+            }}
+            sx={{ color: "#d1d5db", minWidth: 96 }}
+          >
+            Open timeline
+          </Button>
+        ) : (
+          <Button
+            size="small"
+            onClick={handleTrackMedia}
+            disabled={tracking}
+            sx={{ color: "#d1d5db", minWidth: 110 }}
+          >
+            {tracking ? "Tracking" : "Track media"}
+          </Button>
+        )}
       </Stack>
+      {trackError && (
+        <Typography sx={{ color: "#f87171", ml: 4, mb: 1, fontFamily: "monospace", fontSize: 12 }}>
+          {trackError}
+        </Typography>
+      )}
       {expanded && hasRawDetails && (
         <Box
           sx={{
@@ -948,6 +1449,23 @@ function EventRow({ event }: { event: LiveEvent }) {
       )}
     </Box>
   );
+}
+
+function formatDuration(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
 }
 
 export default App;
