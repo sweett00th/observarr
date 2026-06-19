@@ -13,10 +13,11 @@ export type MediaIdentity = {
 
 export function identifyMedia(event: LiveEvent): MediaIdentity | null {
   const raw = isObject(event.rawPayload) ? event.rawPayload : {};
-  const title = event.entityTitle ||
+  const title = extractTitleFromDownloadName(raw) ||
+    event.entityTitle ||
     pickString(raw, ["title", "subject", "name", "Name"]) ||
     pickNestedString(raw, [["movie", "title"], ["series", "title"], ["episode", "title"]]) ||
-    event.title;
+    (event.source === "sabnzbd" ? null : event.title);
 
   if (!title || title.trim().length === 0) {
     return null;
@@ -33,7 +34,8 @@ export function identifyMedia(event: LiveEvent): MediaIdentity | null {
     pickNestedString(raw, [["series", "tvdbId"], ["series", "tvdb_id"]]) || null;
   const externalId = tmdbId || imdbId || tvdbId || pickString(raw, ["guid"]);
   const year = pickString(raw, ["year", "releaseYear"]) ||
-    pickNestedString(raw, [["movie", "year"], ["series", "year"]]);
+    pickNestedString(raw, [["movie", "year"], ["series", "year"]]) ||
+    extractYearFromDownloadName(raw);
   const keyParts = externalId
     ? [normalizeKey(mediaType || "media"), normalizeKey(externalId)]
     : ["title", normalizeKey(`${title} ${year || ""}`)];
@@ -123,6 +125,36 @@ function inferMediaType(event: LiveEvent): string | null {
   }
 
   return null;
+}
+
+function extractTitleFromDownloadName(data: Record<string, unknown>): string | null {
+  const value = pickString(data, ["name", "filename", "jobName", "nzbName"]);
+
+  if (!value) {
+    return null;
+  }
+
+  const cleaned = value
+    .replace(/\.(mkv|mp4|avi|nzb)$/i, "")
+    .replace(/[._]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const markerMatch = cleaned.match(
+    /^(.*?)(?:\s+(?:19|20)\d{2}|\s+S\d{1,2}E\d{1,2}|\s+(?:480p|720p|1080p|2160p|4k|bluray|web[- ]?dl|webrip|remux|hdtv)\b)/i,
+  );
+  const title = markerMatch?.[1]?.trim() || cleaned;
+
+  if (!title || title.length < 2) {
+    return null;
+  }
+
+  return title;
+}
+
+function extractYearFromDownloadName(data: Record<string, unknown>): string | null {
+  const value = pickString(data, ["name", "filename", "jobName", "nzbName", "title"]);
+  const match = value?.match(/\b((?:19|20)\d{2})\b/);
+  return match?.[1] ?? null;
 }
 
 function normalizeKey(value: string): string {

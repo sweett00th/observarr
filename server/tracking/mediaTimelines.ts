@@ -183,10 +183,13 @@ function updateMediaMetadata(
   event: LiveEvent,
   identity: NonNullable<ReturnType<typeof identifyMedia>>,
 ): void {
+  const current = getMediaTimeline(db, mediaItemId);
+  const shouldReplaceTitle = shouldUpdateCanonicalTitle(current?.title ?? "", identity.title, event.source);
+
   db.query(`
     UPDATE media_items
-    SET title = ?,
-      normalized_title = ?,
+    SET title = CASE WHEN ? THEN ? ELSE title END,
+      normalized_title = CASE WHEN ? THEN ? ELSE normalized_title END,
       media_type = COALESCE(?, media_type),
       tmdb_id = COALESCE(?, tmdb_id),
       imdb_id = COALESCE(?, imdb_id),
@@ -196,7 +199,9 @@ function updateMediaMetadata(
       updated_at = ?
     WHERE id = ?
   `, [
+    shouldReplaceTitle ? 1 : 0,
     identity.title,
+    shouldReplaceTitle ? 1 : 0,
     identity.normalizedTitle,
     identity.mediaType,
     identity.tmdbId,
@@ -207,6 +212,25 @@ function updateMediaMetadata(
     new Date().toISOString(),
     mediaItemId,
   ]);
+}
+
+function shouldUpdateCanonicalTitle(currentTitle: string, candidateTitle: string, source: string): boolean {
+  if (!currentTitle) {
+    return true;
+  }
+
+  if (source === "sabnzbd") {
+    return false;
+  }
+
+  const noisyPrefixes = ["sabnzbd:", "radarr:", "sonarr:", "jellyfin:", "seerr:"];
+  const normalizedCandidate = candidateTitle.trim().toLowerCase();
+
+  if (noisyPrefixes.some((prefix) => normalizedCandidate.startsWith(prefix))) {
+    return false;
+  }
+
+  return normalizeSearchText(currentTitle) !== normalizeSearchText(candidateTitle);
 }
 
 function findLooseMediaTimelineMatch(db: Database, event: LiveEvent): number | null {
