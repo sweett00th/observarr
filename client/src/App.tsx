@@ -15,6 +15,7 @@ import {
   CircularProgress,
   Container,
   CssBaseline,
+  Drawer,
   FormControlLabel,
   Grid,
   IconButton,
@@ -113,6 +114,7 @@ function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   useEffect(() => {
     fetchVersion();
@@ -224,7 +226,9 @@ function App() {
             </Typography>
             {user && (
               <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="body2">{user.username}</Typography>
+                <Button color="inherit" size="small" onClick={() => setProfileOpen(true)}>
+                  {user.username}
+                </Button>
                 <Tooltip title="Log out">
                   <IconButton color="inherit" onClick={handleLogout} aria-label="Log out">
                     <LogoutIcon />
@@ -249,8 +253,149 @@ function App() {
             onSubmit={handleLogin}
           />
         )}
+        {user && (
+          <ProfileDrawer
+            user={user}
+            open={profileOpen}
+            onClose={() => setProfileOpen(false)}
+          />
+        )}
       </Box>
     </ThemeProvider>
+  );
+}
+
+function ProfileDrawer({
+  user,
+  open,
+  onClose,
+}: {
+  user: User;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  async function handlePasswordSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    if (newPassword !== confirmPassword) {
+      setError("New passwords do not match");
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setError("New password must be at least 6 characters");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const response = await fetch("/api/auth/password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Password update failed");
+      }
+
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setSuccess("Password updated");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Password update failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Drawer anchor="right" open={open} onClose={onClose}>
+      <Box sx={{ width: { xs: 320, sm: 380 }, p: 3 }}>
+        <Stack spacing={3}>
+          <Stack spacing={0.5}>
+            <Typography variant="h6" component="h2">
+              Profile
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Local admin account
+            </Typography>
+          </Stack>
+
+          <Stack spacing={1}>
+            <Typography variant="body2" color="text.secondary">
+              Username
+            </Typography>
+            <Typography>{user.username}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Role
+            </Typography>
+            <Typography>{user.role}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Last login
+            </Typography>
+            <Typography>
+              {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "Not recorded"}
+            </Typography>
+          </Stack>
+
+          <Stack component="form" spacing={2} onSubmit={handlePasswordSubmit}>
+            <Typography variant="subtitle1" component="h3">
+              Change password
+            </Typography>
+            {error && <Alert severity="error">{error}</Alert>}
+            {success && <Alert severity="success">{success}</Alert>}
+            <TextField
+              label="Current password"
+              type="password"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              required
+              fullWidth
+            />
+            <TextField
+              label="New password"
+              type="password"
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              required
+              fullWidth
+            />
+            <TextField
+              label="Confirm new password"
+              type="password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              required
+              fullWidth
+            />
+            <Button type="submit" variant="contained" disabled={saving}>
+              {saving ? "Updating" : "Update password"}
+            </Button>
+          </Stack>
+        </Stack>
+      </Box>
+    </Drawer>
   );
 }
 

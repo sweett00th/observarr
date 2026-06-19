@@ -82,6 +82,7 @@ npm --prefix client run typecheck
 - `GET /api/auth/me` returns the current user or `401`.
 - `POST /api/auth/login` creates a server-side session and sets an HttpOnly cookie.
 - `POST /api/auth/logout` deletes the current session and clears the cookie.
+- `POST /api/auth/password` changes the current user's password after verifying the current password.
 - `GET /api/admin/overview` returns SQLite-backed dashboard counts and provider configuration status. It requires login.
 - `GET /api/events/recent` returns current in-memory Event Console events. It requires login.
 - `GET /api/events/stream` streams live Event Console events with Server-Sent Events. It requires login.
@@ -170,6 +171,8 @@ The first admin user is bootstrapped only when the `users` table is empty.
 - There is no public registration and no third-party login.
 
 Sessions are random opaque tokens stored in an HttpOnly `sms_gateway_session` cookie. Only a SHA-256 hash of each session token is stored in SQLite. `SESSION_TTL_DAYS` controls expiry and defaults to `7`. Keep `COOKIE_SECURE=false` for local HTTP/LAN use; set it to `true` only behind HTTPS.
+
+Authenticated users can open the profile drawer by clicking their username in the upper-right app bar. The drawer shows local account details and allows changing the password. Password changes require the current password and store a fresh PBKDF2-SHA256 hash.
 
 ## First Tests
 

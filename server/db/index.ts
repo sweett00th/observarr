@@ -141,6 +141,14 @@ export function recordUserLogin(db: Database, userId: number): void {
   db.query("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?", [now, now, userId]);
 }
 
+export function updateUserPassword(db: Database, userId: number, passwordHash: string): void {
+  db.query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?", [
+    passwordHash,
+    new Date().toISOString(),
+    userId,
+  ]);
+}
+
 export function toPublicUser(user: UserRecord): PublicUser {
   return {
     id: user.id,
