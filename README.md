@@ -1,4 +1,4 @@
-# sms-gateway
+# observarr
 
 Internal Unraid Docker app for receiving home server webhooks and, later, sending SMS notifications. The app runs a Deno/Hono backend, a Vite React admin panel, local SQLite persistence, local username/password auth, Docker packaging, GHCR publishing, and an Unraid template.
 
