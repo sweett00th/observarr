@@ -632,6 +632,9 @@ export function NotificationProfilesManager({
                         onChange={(phoneNumbers) =>
                           setEditor({ ...editor, phoneNumbers })}
                         onChanged={() => fetchProfile(details.id)}
+                        onEditOptInTemplate={optInTemplateEvent
+                          ? () => setTemplateEditorEvent(optInTemplateEvent)
+                          : undefined}
                       />
                     </Grid>
                   </Grid>
