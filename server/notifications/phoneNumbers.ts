@@ -1,6 +1,6 @@
 import type { Database } from "../db/index.ts";
 import { firstRow } from "../db/index.ts";
-import { getWebhookBaseUrl, notificationsEnabled } from "../lib/config.ts";
+import { getTextbeltWebhookSecret, getWebhookBaseUrl, notificationsEnabled } from "../lib/config.ts";
 import {
   createTextbeltClient,
   type TextbeltClient,
@@ -419,7 +419,12 @@ function interpretReply(text: string): "opted_in" | "opted_out" | "unknown" {
 
 function getTextbeltReplyWebhookUrl(): string | undefined {
   const baseUrl = getWebhookBaseUrl();
-  return baseUrl ? `${baseUrl.replace(/\/+$/, "")}/webhook/textbelt/reply` : undefined;
+  if (!baseUrl) return undefined;
+  const secret = getTextbeltWebhookSecret();
+  const path = secret
+    ? `/webhook/textbelt/reply/${encodeURIComponent(secret)}`
+    : "/webhook/textbelt/reply";
+  return `${baseUrl}${path}`;
 }
 
 function mapPhoneNumber(row: unknown[]): ProfilePhoneNumber {

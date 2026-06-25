@@ -104,6 +104,10 @@ export function getTextbeltSender(): string | undefined {
   return getEnv("TEXTBELT_SENDER");
 }
 
+export function getTextbeltWebhookSecret(): string | undefined {
+  return getEnv("TEXTBELT_WEBHOOK_SECRET");
+}
+
 export function isTextbeltConfigured(): boolean {
   return Boolean(getTextbeltKey());
 }

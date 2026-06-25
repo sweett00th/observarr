@@ -1,7 +1,7 @@
 import { type Context, Hono } from "@hono/hono";
 import type { Database } from "../db/index.ts";
 import { eventBus, type EventSourceName, normalizeWebhookEvent } from "../events/eventBus.ts";
-import { getSharedSecret } from "../lib/config.ts";
+import { getSharedSecret, getTextbeltWebhookSecret } from "../lib/config.ts";
 import { dispatchNotificationsForEvent } from "../notifications/dispatchNotifications.ts";
 import { subscribeRequesterToSeerrMedia } from "../notifications/mediaInterests.ts";
 import { recordTextbeltReply } from "../notifications/phoneNumbers.ts";
@@ -20,7 +20,12 @@ const webhookSources: EventSourceName[] = [
 export function createWebhookRoutes(db: Database): Hono {
   const webhooks = new Hono();
 
-  webhooks.post("/textbelt/reply", async (c) => {
+  webhooks.post("/textbelt/reply/:token?", async (c) => {
+    const secret = getTextbeltWebhookSecret();
+    if (secret && c.req.param("token") !== secret) {
+      return c.json({ ok: false, status: "unauthorized", error: "Invalid webhook token" }, 401);
+    }
+
     const payload = await readJsonPayload(c);
     if (!payload.ok) {
       return c.json(payload.body, payload.status);
