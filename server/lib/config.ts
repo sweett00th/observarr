@@ -1,4 +1,4 @@
-export const APP_NAME = "sms-gateway";
+export const APP_NAME = "observarr";
 export const APP_VERSION = "0.1.0";
 
 export function getEnv(name: string): string | undefined {
@@ -18,7 +18,7 @@ export function getPort(): number {
 }
 
 export function getDbPath(): string {
-  return getEnv("DB_PATH") || "/data/sms-gateway.db";
+  return getEnv("DB_PATH") || "/data/observarr.db";
 }
 
 export function getAdminUsername(): string {

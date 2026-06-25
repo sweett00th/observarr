@@ -3,7 +3,7 @@ import type { Database, PublicUser } from "../db/index.ts";
 import { findUserById, firstRow } from "../db/index.ts";
 import { getCookieSecure, getSessionTtlDays } from "./config.ts";
 
-export const sessionCookieName = "sms_gateway_session";
+export const sessionCookieName = "observarr_session";
 
 const tokenBytes = 32;
 const textEncoder = new TextEncoder();

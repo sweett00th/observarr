@@ -12,7 +12,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: sweett00th/sms-gateway
+  IMAGE_NAME: sweett00th/observarr
 
 jobs:
   docker:

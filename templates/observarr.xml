@@ -1,19 +1,19 @@
 <?xml version="1.0"?>
 <Container version="2">
-  <Name>sms-gateway</Name>
-  <Repository>ghcr.io/sweett00th/sms-gateway:latest</Repository>
-  <Registry>https://ghcr.io/sweett00th/sms-gateway</Registry>
+  <Name>observarr</Name>
+  <Repository>ghcr.io/sweett00th/observarr:latest</Repository>
+  <Registry>https://ghcr.io/sweett00th/observarr</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/sweett00th/sms-gateway/issues</Support>
-  <Project>https://github.com/sweett00th/sms-gateway</Project>
-  <Overview>Internal LAN-only webhook-to-SMS gateway for home server notifications from Jellyseerr/Seerr, Jellyfin, Radarr, and Sonarr. The container runs a Deno/Hono API and serves the React admin panel. SMS provider delivery is not implemented yet.</Overview>
+  <Support>https://github.com/sweett00th/observarr/issues</Support>
+  <Project>https://github.com/sweett00th/observarr</Project>
+  <Overview>Internal LAN-only observability app for home server media automation webhooks from Jellyseerr/Seerr, Jellyfin, Radarr, Sonarr, and SABnzbd. The container runs a Deno/Hono API and serves the React admin panel. SMS provider delivery is not implemented yet.</Overview>
   <Category>Tools:</Category>
-  <TemplateURL>https://raw.githubusercontent.com/sweett00th/sms-gateway/main/templates/sms-gateway.xml</TemplateURL>
+  <TemplateURL>https://raw.githubusercontent.com/sweett00th/observarr/main/templates/observarr.xml</TemplateURL>
   <WebUI>http://[IP]:[PORT:3020]/</WebUI>
-  <Icon>https://raw.githubusercontent.com/sweett00th/sms-gateway/main/assets/icon.png</Icon>
+  <Icon>https://raw.githubusercontent.com/sweett00th/observarr/main/assets/icon.png</Icon>
   <Icon/>
   <ExtraParams/>
   <PostArgs/>
@@ -22,10 +22,10 @@
   <DonateText/>
   <DonateLink/>
   <Requires/>
-  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/sms-gateway" Mode="rw" Description="Persistent SQLite database directory." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/sms-gateway</Config>
-  <Config Name="Web UI Port" Target="3020" Default="3020" Mode="tcp" Description="HTTP port for sms-gateway." Type="Port" Display="always" Required="true" Mask="false">3020</Config>
+  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/observarr" Mode="rw" Description="Persistent SQLite database directory." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/observarr</Config>
+  <Config Name="Web UI Port" Target="3020" Default="3020" Mode="tcp" Description="HTTP port for Observarr." Type="Port" Display="always" Required="true" Mask="false">3020</Config>
   <Config Name="TZ" Target="TZ" Default="America/New_York" Mode="" Description="Container timezone." Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
-  <Config Name="DB_PATH" Target="DB_PATH" Default="/data/sms-gateway.db" Mode="" Description="SQLite database file path inside the container." Type="Variable" Display="always" Required="true" Mask="false">/data/sms-gateway.db</Config>
+  <Config Name="DB_PATH" Target="DB_PATH" Default="/data/observarr.db" Mode="" Description="SQLite database file path inside the container." Type="Variable" Display="always" Required="true" Mask="false">/data/observarr.db</Config>
   <Config Name="ADMIN_USERNAME" Target="ADMIN_USERNAME" Default="admin" Mode="" Description="Initial admin username used only when no users exist." Type="Variable" Display="always" Required="false" Mask="false">admin</Config>
   <Config Name="ADMIN_PASSWORD" Target="ADMIN_PASSWORD" Default="" Mode="" Description="Initial admin password used only when no users exist. Set before first start, then remove or rotate after bootstrap if desired." Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="SESSION_TTL_DAYS" Target="SESSION_TTL_DAYS" Default="7" Mode="" Description="Server-side session lifetime in days." Type="Variable" Display="always" Required="false" Mask="false">7</Config>

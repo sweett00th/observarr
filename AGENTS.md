@@ -1,6 +1,6 @@
-# sms-gateway Agent Notes
+# Observarr Agent Notes
 
-This repo is a custom internal Unraid Docker app named `sms-gateway`.
+This repo is a custom internal Unraid Docker app named `observarr`.
 
 The intended flow is:
 
@@ -16,17 +16,17 @@ Current durable architecture decisions:
 - Frontend is Vite + React + TypeScript + Material UI under `client/`.
 - Production deployment is one Docker container: Deno serves API routes, webhook routes, and the built React frontend from `client/dist`.
 - The previous Node/Express scaffold was intentionally replaced. Do not reintroduce Express or root Node backend dependencies.
-- GHCR image is `ghcr.io/sweett00th/sms-gateway`.
-- Unraid appdata default is `/mnt/user/appdata/sms-gateway`.
+- GHCR image is `ghcr.io/sweett00th/observarr`.
+- Unraid appdata default is `/mnt/user/appdata/observarr`.
 - SQLite is the chosen local persistence layer. Do not add MongoDB, Redis, Prisma, or a separate database container without a new explicit request.
-- The SQLite DB defaults to `/data/sms-gateway.db`; Unraid appdata should mount to `/data`.
+- The SQLite DB defaults to `/data/observarr.db`; Unraid appdata should mount to `/data`.
 - Local auth uses username/password credentials, PBKDF2 password hashes, HttpOnly cookies, and server-side sessions stored in SQLite.
 - Initial admin bootstrap uses `ADMIN_USERNAME` and `ADMIN_PASSWORD` only when no users exist. Never create a hardcoded default admin password, and never log passwords.
 - Do not add SSO, OAuth, Auth0, Google login, or any third-party identity provider.
 - The Event Console live buffer is intentionally ephemeral and in-memory only.
 - Media Timelines persist every identifiable media webhook event to SQLite in `media_items` and `media_events`.
 - Media timeline cleanup runs on startup and daily. `MEDIA_AVAILABLE` marks lifecycle completion and schedules cleanup 14 days later.
-- External services push live events into `sms-gateway` through webhook endpoints or scripts. Do not poll Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, or other app APIs for the Event Console unless explicitly requested.
+- External services push live events into Observarr through webhook endpoints or scripts. Do not poll Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, or other app APIs for the Event Console unless explicitly requested.
 - `tools/mock-events.ts` is a local development helper that posts synthetic events into webhook endpoints. Keep it dev-only; it is not production polling or event ingestion logic.
 - Internal port defaults to `3020`.
 - Keep the app LAN-only. Do not assume public proxying, Cloudflare, or NPM.

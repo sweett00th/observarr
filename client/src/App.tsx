@@ -287,7 +287,7 @@ function App() {
         <AppBar position="static" elevation={0}>
           <Toolbar>
             <Typography variant="h6" component="h1" sx={{ fontWeight: 700, flexGrow: 1 }}>
-              SMS Gateway
+              Observarr
             </Typography>
             {user && (
               <Stack direction="row" spacing={1} alignItems="center">
@@ -1216,19 +1216,19 @@ function EventConsole({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [drawerHeight, setDrawerHeight] = useState(() => {
-    const savedHeight = Number(localStorage.getItem("sms-gateway:event-console-height"));
+    const savedHeight = Number(localStorage.getItem("observarr:event-console-height"));
     return Number.isFinite(savedHeight) && savedHeight >= 260 ? savedHeight : 420;
   });
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [status, setStatus] = useState<"connecting" | "live" | "disconnected">("connecting");
   const [enabledSources, setEnabledSources] = useState<Record<string, boolean>>(() => {
-    const saved = localStorage.getItem("sms-gateway:event-console-filters");
+    const saved = localStorage.getItem("observarr:event-console-filters");
 
     if (saved) {
       try {
         return JSON.parse(saved) as Record<string, boolean>;
       } catch {
-        localStorage.removeItem("sms-gateway:event-console-filters");
+        localStorage.removeItem("observarr:event-console-filters");
       }
     }
 
@@ -1260,11 +1260,11 @@ function EventConsole({
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("sms-gateway:event-console-filters", JSON.stringify(enabledSources));
+    localStorage.setItem("observarr:event-console-filters", JSON.stringify(enabledSources));
   }, [enabledSources]);
 
   useEffect(() => {
-    localStorage.setItem("sms-gateway:event-console-height", String(drawerHeight));
+    localStorage.setItem("observarr:event-console-height", String(drawerHeight));
   }, [drawerHeight]);
 
   const allowedSources = new Set(
@@ -1454,7 +1454,7 @@ function EventRow({
   const [mediaTimelineId, setMediaTimelineId] = useState<number | null>(null);
   const [trackError, setTrackError] = useState<string | null>(null);
   const [payloadHeight, setPayloadHeight] = useState(() => {
-    const savedHeight = Number(localStorage.getItem("sms-gateway:event-payload-height"));
+    const savedHeight = Number(localStorage.getItem("observarr:event-payload-height"));
     return Number.isFinite(savedHeight) && savedHeight >= 120 ? savedHeight : 220;
   });
   const sourceColor = sourceColors[event.source];
@@ -1463,7 +1463,7 @@ function EventRow({
   const hasRawDetails = rawDetails !== undefined && rawDetails !== null;
 
   useEffect(() => {
-    localStorage.setItem("sms-gateway:event-payload-height", String(payloadHeight));
+    localStorage.setItem("observarr:event-payload-height", String(payloadHeight));
   }, [payloadHeight]);
 
   function handlePayloadResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
