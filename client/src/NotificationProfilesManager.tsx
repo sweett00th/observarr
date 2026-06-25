@@ -156,11 +156,13 @@ export function NotificationProfilesManager({
   profileCount,
   onClose,
   onChanged,
+  onOpenMediaTimeline,
 }: {
   open: boolean;
   profileCount: number;
   onClose: () => void;
   onChanged: () => void;
+  onOpenMediaTimeline: (id: number) => void;
 }) {
   const [query, setQuery] = useState("");
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
@@ -745,6 +747,13 @@ export function NotificationProfilesManager({
                               }`}
                               color={interest.enabled ? "primary" : "default"}
                               variant={interest.enabled ? "filled" : "outlined"}
+                              clickable={interest.mediaItemId !== null}
+                              onClick={interest.mediaItemId !== null
+                                ? () => {
+                                  onClose();
+                                  onOpenMediaTimeline(interest.mediaItemId!);
+                                }
+                                : undefined}
                             />
                           ))}
                         </Stack>

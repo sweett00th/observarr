@@ -372,6 +372,10 @@ function App() {
             profileCount={overview?.counts.profiles ?? 0}
             onClose={() => setNotificationProfilesOpen(false)}
             onChanged={() => setOverviewRefreshKey((value) => value + 1)}
+            onOpenMediaTimeline={(id) => {
+              setNotificationProfilesOpen(false);
+              openMediaTimeline(id);
+            }}
           />
         )}
         {user && <EventConsole onOpenMediaTimeline={openMediaTimeline} />}
