@@ -1140,28 +1140,42 @@ function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
     onChanged,
     onEditOptInTemplate,
   } = props;
+  const [sendError, setSendError] = useState<string | null>(null);
+
   async function sendWelcome(phoneId: number) {
-    const response = await fetch(
-      `/api/notification-profiles/${profileId}/phone-numbers/${phoneId}/send-opt-in`,
-      { method: "POST" },
-    );
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "Could not send opt-in text");
+    setSendError(null);
+    try {
+      const response = await fetch(
+        `/api/notification-profiles/${profileId}/phone-numbers/${phoneId}/send-opt-in`,
+        { method: "POST" },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        setSendError(data.error || "Could not send opt-in text");
+        return;
+      }
+      onChanged();
+    } catch {
+      setSendError("Could not send opt-in text");
     }
-    onChanged();
   }
 
   async function sendAllPending() {
-    const response = await fetch(
-      `/api/notification-profiles/${profileId}/phone-numbers/send-pending-opt-ins`,
-      { method: "POST" },
-    );
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "Could not send opt-in texts");
+    setSendError(null);
+    try {
+      const response = await fetch(
+        `/api/notification-profiles/${profileId}/phone-numbers/send-pending-opt-ins`,
+        { method: "POST" },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        setSendError(data.error || "Could not send opt-in texts");
+        return;
+      }
+      onChanged();
+    } catch {
+      setSendError("Could not send opt-in texts");
     }
-    onChanged();
   }
 
   async function toggleReceipts(phoneId?: number) {
@@ -1238,6 +1252,11 @@ function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
           </Button>
         </Stack>
       </Stack>
+      {sendError && (
+        <Alert severity="error" onClose={() => setSendError(null)}>
+          {sendError}
+        </Alert>
+      )}
       {phones.length === 0 && (
         <Alert severity="info">
           No phone numbers. Add a number, save the profile, then send its opt-in
