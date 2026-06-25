@@ -260,25 +260,33 @@ export async function sendWelcomeOptInMessage(
   return getProfilePhoneNumber(db, profileId, phone.id)!;
 }
 
-export async function sendPendingWelcomeOptInMessages(
+export function sendPendingWelcomeOptInMessages(
   db: Database,
   profileId: number,
   client: TextbeltClient = createTextbeltClient(),
-): Promise<{ sent: number; failed: number; phones: ProfilePhoneNumber[] }> {
-  let sent = 0;
-  let failed = 0;
-  const updated: ProfilePhoneNumber[] = [];
-  for (const phone of listProfilePhoneNumbers(db, profileId)) {
-    if (phone.enabled && phone.optInState === "not_sent") {
-      try {
-        updated.push(await sendWelcomeOptInMessage(db, profileId, phone.id, client));
-        sent += 1;
-      } catch {
-        failed += 1;
-      }
-    }
+): { queued: number } {
+  if (!notificationsEnabled()) {
+    throw new ValidationError("NOTIFICATIONS_ENABLED must be true before sending opt-in texts");
   }
-  return { sent, failed, phones: updated };
+
+  const eligible = listProfilePhoneNumbers(db, profileId)
+    .filter((phone) => phone.enabled && phone.optInState === "not_sent");
+
+  if (eligible.length > 0) {
+    // Textbelt rate limit: 1 message per second. Dispatch in background with 1.1 s between sends.
+    (async () => {
+      for (let i = 0; i < eligible.length; i++) {
+        if (i > 0) await new Promise<void>((resolve) => setTimeout(resolve, 1100));
+        try {
+          await sendWelcomeOptInMessage(db, profileId, eligible[i].id, client);
+        } catch {
+          // Receipt is already marked failed/rejected inside sendWelcomeOptInMessage
+        }
+      }
+    })();
+  }
+
+  return { queued: eligible.length };
 }
 
 export function recordTextbeltReply(db: Database, input: {
