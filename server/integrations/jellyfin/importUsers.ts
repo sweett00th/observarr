@@ -4,6 +4,7 @@ import {
   ensureAvatarDirectory,
   findIdentity,
   getAvatarFilePath,
+  seedSeerrIdentityFromUsername,
   updateProfileAvatar,
   upsertExternalIdentity,
 } from "../../notifications/profiles.ts";
@@ -62,6 +63,8 @@ export async function importJellyfinUsers(db: Database): Promise<JellyfinImportS
         });
         summary.created += 1;
       }
+
+      seedSeerrIdentityFromUsername(db, profileId, user.username, user.email, syncedAt);
 
       db.execute("COMMIT");
     } catch (error) {

@@ -445,6 +445,38 @@ export function upsertExternalIdentity(db: Database, input: {
   );
 }
 
+export function seedSeerrIdentityFromUsername(
+  db: Database,
+  profileId: number,
+  username: string,
+  email: string | null,
+  syncedAt: string,
+): void {
+  const existing = firstRow(
+    db,
+    "SELECT id FROM profile_external_identities WHERE profile_id = ? AND provider = 'seerr'",
+    [profileId],
+  );
+  if (existing) return;
+
+  const conflict = firstRow(
+    db,
+    "SELECT profile_id FROM profile_external_identities WHERE provider = 'seerr' AND external_user_id = ? AND profile_id <> ?",
+    [username, profileId],
+  );
+  if (conflict) return;
+
+  const now = new Date().toISOString();
+  db.query(
+    `
+    INSERT INTO profile_external_identities (
+      profile_id, provider, external_user_id, username, email, last_synced_at, created_at, updated_at
+    ) VALUES (?, 'seerr', ?, ?, ?, ?, ?, ?)
+  `,
+    [profileId, username, username, email, syncedAt, now, now],
+  );
+}
+
 export function updateProfileAvatar(
   db: Database,
   profileId: number,
