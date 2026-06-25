@@ -274,6 +274,96 @@ const migrations: Migration[] = [
         ON profile_event_preferences(profile_id);
     `,
   },
+  {
+    version: 6,
+    name: "global_templates_textbelt_receipts",
+    sql: `
+      ALTER TABLE event_templates RENAME TO event_templates_legacy;
+
+      CREATE TABLE event_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        sms_body_template TEXT,
+        email_subject_template TEXT,
+        email_body_template TEXT,
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(source, event_type)
+      );
+
+      ALTER TABLE message_receipts RENAME TO message_receipts_legacy;
+
+      CREATE TABLE message_receipts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_dedupe_key TEXT,
+        event_source TEXT,
+        event_type TEXT,
+        event_title TEXT,
+        profile_id INTEGER,
+        channel TEXT NOT NULL CHECK (channel IN ('sms', 'email')),
+        provider TEXT,
+        template_id INTEGER,
+        template_revision INTEGER,
+        rendered_body TEXT,
+        render_context_json TEXT,
+        destination_masked TEXT,
+        provider_message_id TEXT,
+        submission_status TEXT NOT NULL CHECK (submission_status IN ('pending', 'submitted', 'rejected', 'failed', 'submission_unknown', 'render_failed', 'skipped')),
+        delivery_status TEXT NOT NULL CHECK (delivery_status IN ('not_applicable', 'unknown', 'sending', 'sent', 'delivered', 'failed')),
+        provider_error TEXT,
+        provider_response_json TEXT,
+        quota_remaining INTEGER,
+        attempted_at TEXT NOT NULL,
+        submitted_at TEXT,
+        last_status_check_at TEXT,
+        delivered_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES notification_profiles(id) ON DELETE SET NULL,
+        FOREIGN KEY (template_id) REFERENCES event_templates(id) ON DELETE SET NULL
+      );
+
+      CREATE UNIQUE INDEX message_receipts_event_profile_channel_idx
+        ON message_receipts(event_dedupe_key, profile_id, channel)
+        WHERE event_dedupe_key IS NOT NULL;
+      CREATE INDEX message_receipts_created_at_idx ON message_receipts(created_at);
+      CREATE INDEX message_receipts_status_poll_idx
+        ON message_receipts(provider, provider_message_id, delivery_status, last_status_check_at);
+
+      INSERT INTO message_receipts (
+        id, channel, provider, destination_masked, provider_message_id,
+        submission_status, delivery_status, provider_response_json,
+        attempted_at, created_at, updated_at
+      )
+      SELECT
+        id,
+        'sms',
+        provider,
+        destination,
+        provider_message_id,
+        CASE
+          WHEN status IN ('pending', 'submitted', 'rejected', 'failed', 'submission_unknown', 'render_failed', 'skipped') THEN status
+          WHEN status IN ('sent', 'delivered') THEN 'submitted'
+          ELSE 'failed'
+        END,
+        CASE
+          WHEN status = 'delivered' THEN 'delivered'
+          WHEN status = 'sent' THEN 'sent'
+          WHEN status = 'failed' THEN 'failed'
+          ELSE 'unknown'
+        END,
+        NULL,
+        created_at,
+        created_at,
+        updated_at
+      FROM message_receipts_legacy;
+
+      ALTER TABLE notification_profiles ADD COLUMN sms_opted_in_at TEXT;
+      ALTER TABLE notification_profiles ADD COLUMN sms_opted_out_at TEXT;
+    `,
+  },
 ];
 
 export function runMigrations(db: DB): void {

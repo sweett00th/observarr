@@ -92,13 +92,34 @@ export function getBuildInfo() {
   };
 }
 
+export function notificationsEnabled(): boolean {
+  return getEnv("NOTIFICATIONS_ENABLED") === "true";
+}
+
+export function getTextbeltKey(): string | undefined {
+  return getEnv("TEXTBELT_KEY");
+}
+
+export function getTextbeltSender(): string | undefined {
+  return getEnv("TEXTBELT_SENDER");
+}
+
+export function isTextbeltConfigured(): boolean {
+  return Boolean(getTextbeltKey());
+}
+
+export function getProviderStatus() {
+  return {
+    notificationsEnabled: notificationsEnabled(),
+    smsProvider: "textbelt",
+    textbeltKeyConfigured: isTextbeltConfigured(),
+    textbeltSenderConfigured: Boolean(getTextbeltSender()),
+    emailConfigured: false,
+  };
+}
+
 export function isProviderConfigured(): boolean {
-  return Boolean(
-    getEnv("TWILIO_ACCOUNT_SID") &&
-      getEnv("TWILIO_AUTH_TOKEN") &&
-      getEnv("TWILIO_FROM") &&
-      getEnv("SMS_TO"),
-  );
+  return notificationsEnabled() && isTextbeltConfigured();
 }
 
 export function getSharedSecret(): string | undefined {

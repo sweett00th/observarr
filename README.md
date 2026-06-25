@@ -2,7 +2,7 @@
 
 Internal Unraid Docker app for receiving home server webhooks, managing future notification recipient profiles, and later sending notifications. The app runs a Deno/Hono backend, a Vite React admin panel, local SQLite persistence, local username/password auth, Docker packaging, GHCR publishing, and an Unraid template.
 
-No SMS or email delivery provider is implemented yet.
+SMS delivery is implemented through Textbelt and is disabled by default. Email templates are stored for future use, but email delivery is not implemented.
 
 ## Architecture
 
@@ -12,7 +12,9 @@ No SMS or email delivery provider is implemented yet.
 - Auth: local username/password with server-side SQLite sessions
 - Live events: ephemeral in-memory Event Console streamed with Server-Sent Events
 - Media timelines: identified media events persisted for audit and gap analysis
-- Notification profiles: local recipient profiles with contacts, external mappings, preferences, and Jellyfin avatar imports
+- Notification profiles: local recipient profiles with contacts, SMS consent, external mappings, preferences, and Jellyfin avatar imports
+- Event templates: global SMS/email templates per source/event with safe `{variableName}` rendering
+- SMS receipts: durable Textbelt submission and delivery-status receipts
 - Production: one Docker container
 - Image: `ghcr.io/sweett00th/observarr`
 - Unraid template: `templates/observarr.xml`
@@ -101,6 +103,14 @@ npm --prefix client run typecheck
 - `GET /api/notification-profiles/:id/avatar` streams a cached imported avatar. It requires login.
 - `GET /api/integrations/jellyfin/status` returns safe Jellyfin configuration status. It requires login.
 - `POST /api/integrations/jellyfin/import-users` imports Jellyfin users into notification profiles. It requires login.
+- `GET /api/event-templates/catalog` returns the canonical template catalog, variables, defaults, and current template summaries. It requires login.
+- `GET /api/event-templates` lists global event templates. It requires login.
+- `GET /api/event-templates/:source/:eventType` returns one global template. It requires login.
+- `PATCH /api/event-templates/:source/:eventType` edits one global template and increments its revision. It requires login.
+- `POST /api/event-templates/:source/:eventType/preview` renders a sample preview and sends no messages. It requires login.
+- `POST /api/event-templates/:source/:eventType/reset` resets one global template to the catalog default. It requires login.
+- `GET /api/message-receipts` searches durable SMS receipts. It requires login.
+- `GET /api/message-receipts/:id` returns safe receipt details. It requires login.
 - `POST /webhook/test` accepts JSON, logs a summary, emits a live test event, and returns the summary. It does not send SMS.
 - `POST /webhook/jellyfin`, `/webhook/seerr`, `/webhook/radarr`, `/webhook/sonarr`, and `/webhook/sabnzbd` accept JSON and emit normalized live events. They do not send SMS.
 
@@ -188,14 +198,60 @@ Profiles store:
 
 - Display name and enabled/disabled state
 - Optional phone number and email address
+- Explicit SMS opt-in/out timestamps
 - Optional Jellyfin and Seerr identity mappings
 - Imported Jellyfin avatar metadata
 - Event-specific interest, future SMS preference, and future email preference
 
-Saving profile preferences does not send messages. Imported Jellyfin users are not automatically subscribed to any notification event or delivery channel.
+Saving profile preferences does not send messages by itself. Imported Jellyfin users are not automatically subscribed to any notification event, delivery channel, or SMS consent.
 
-The stable event catalog is served by the backend at `/api/notification-profiles/event-catalog` so the API and UI use the same source and event type values.
+The stable template/event catalog is served by the backend at `/api/event-templates/catalog` so the API and UI use the same source, event type, variable, and default-template values.
 
+## Event Templates and SMS Delivery
+
+Event templates are global per `(source, event_type)`. A profile preference decides whether that recipient is interested in the event and wants SMS or email, but it does not own a private copy of the template. Editing a template from a profile event row changes it for every profile subscribed to that event.
+
+Template syntax is deliberately small:
+
+```text
+{variableName}
+```
+
+Use `{{` for a literal `{` and `}}` for a literal `}`. Only variables listed by `/api/event-templates/catalog` are allowed. Unknown variables and malformed braces block saving. Templates cannot execute JavaScript, expressions, loops, conditionals, dot paths, or arbitrary payload access.
+
+SMS templates and email subject/body templates are stored and previewed. Email transport is not configured yet, so ObservaRR does not send email and does not create fake email receipts.
+
+Textbelt is the only SMS provider. Real SMS requires all of these:
+
+- `NOTIFICATIONS_ENABLED=true`
+- `TEXTBELT_KEY` configured server-side
+- an enabled notification profile
+- a valid phone number
+- explicit profile SMS opt-in recorded in ObservaRR
+- profile event preference enabled with SMS selected
+- a valid global SMS template for that source/event
+
+Imported Jellyfin profiles are not automatically opted into SMS. `/webhook/test` and Event Console test events never send SMS.
+
+## Message Receipts
+
+Every attempted outbound SMS creates a durable receipt before provider submission. Receipts preserve the rendered message body, template revision, masked destination, safe render context, provider message ID, provider response metadata, quota remaining, and separate submission/delivery statuses.
+
+Submission status tracks whether ObservaRR submitted the request to Textbelt:
+
+```text
+pending, submitted, rejected, failed, submission_unknown, render_failed, skipped
+```
+
+Delivery status tracks later provider delivery state:
+
+```text
+not_applicable, unknown, sending, sent, delivered, failed
+```
+
+`submitted` or `sent` does not guarantee handset delivery. A background in-process poller checks recent Textbelt message IDs every 10 minutes and updates delivery status when Textbelt reports progress.
+
+Receipts never store the Textbelt API key, raw webhook payloads, unmasked phone numbers, email addresses, authorization headers, or provider request bodies.
 ## Jellyfin Profile Import
 
 Jellyfin import is optional and requires these server-only environment variables:
@@ -227,7 +283,7 @@ The app stores local state in one SQLite database file. By default:
 
 Override it with `DB_PATH`. In Unraid, `/mnt/user/appdata/observarr` is mounted to `/data`, so the database survives container updates.
 
-Migrations run automatically on startup and are tracked in `schema_migrations`. Current tables include `users`, `sessions`, `message_receipts`, `notification_profiles`, `profile_external_identities`, `profile_event_preferences`, `event_templates`, `provider_settings`, `webhook_events`, `media_items`, and `media_events`. Older development tables `tracked_media` and `tracked_media_events` may also exist on upgraded local databases.
+Migrations run automatically on startup and are tracked in `schema_migrations`. Current tables include `users`, `sessions`, `message_receipts`, `notification_profiles`, `profile_external_identities`, `profile_event_preferences`, `event_templates`, `provider_settings`, `webhook_events`, `media_items`, and `media_events`. Legacy placeholder tables `event_templates_legacy` and `message_receipts_legacy` may exist on upgraded databases. Older development tables `tracked_media` and `tracked_media_events` may also exist on upgraded local databases.
 
 To reset the app in local development, stop the server and delete the SQLite file you used for `DB_PATH`. To also remove imported avatar cache, delete the avatar directory. This removes local ObservaRR data, users, profiles, mappings, preferences, and media timelines.
 
@@ -309,6 +365,9 @@ docker run --rm -p 3020:3020 `
   -e COOKIE_SECURE=false `
   -e EVENT_BUFFER_MINUTES=10 `
   -e EVENT_BUFFER_MAX=250 `
+  -e NOTIFICATIONS_ENABLED=false `
+  -e TEXTBELT_KEY=replace-with-unraid-secret `
+  -e TEXTBELT_SENDER=ObservaRR `
   -e JELLYFIN_URL=http://jellyfin.local:8096 `
   -e JELLYFIN_API_KEY=replace-with-unraid-secret `
   -v ${PWD}\.data:/data `
@@ -382,11 +441,10 @@ Copy `.env.example` for local reference only. In Unraid, set values through the 
 | `WEBHOOK_BASE_URL` | Dev only | Mock event generator target URL. Defaults to `http://localhost:$PORT`. |
 | `MOCK_EVENT_INTERVAL_MS` | Dev only | Mock event generator interval. Defaults to `2500`. |
 | `SHARED_SECRET` | Recommended | Optional webhook secret checked against the `x-sms-secret` header. Set this in Unraid. |
+| `NOTIFICATIONS_ENABLED` | No | Defaults to `false`. Must be `true` before any real SMS can be sent. |
+| `TEXTBELT_KEY` | SMS only | Secret Textbelt API key. Required only when SMS notifications are enabled. |
+| `TEXTBELT_SENDER` | No | Optional approved Textbelt sender name. |
 | `JELLYFIN_URL` | Import only | Internal Jellyfin base URL used only by the server for profile import. |
 | `JELLYFIN_API_KEY` | Import only | Secret Jellyfin API key used only by the server for profile import. |
-| `TWILIO_ACCOUNT_SID` | Future | Placeholder for Twilio configuration. Used only to report whether provider settings appear configured. |
-| `TWILIO_AUTH_TOKEN` | Future | Placeholder for Twilio configuration. No SMS is sent. |
-| `TWILIO_FROM` | Future | Placeholder sender phone number. No SMS is sent. |
-| `SMS_TO` | Future | Placeholder recipient phone number. No SMS is sent. |
 
-Do not commit real secrets. Profile contacts and preferences are stored now for future Textbelt/SMS and email work; no provider delivery is implemented yet.
+Do not commit real secrets. Textbelt keys must never be committed. Twilio is no longer supported. Email templates are stored, but email transport is not implemented.

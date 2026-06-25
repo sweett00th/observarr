@@ -2,6 +2,7 @@ import { type Context, Hono } from "@hono/hono";
 import type { Database } from "../db/index.ts";
 import { eventBus, type EventSourceName, normalizeWebhookEvent } from "../events/eventBus.ts";
 import { getSharedSecret } from "../lib/config.ts";
+import { dispatchNotificationsForEvent } from "../notifications/dispatchNotifications.ts";
 import { summarizePayload } from "../lib/payload.ts";
 import { persistMediaEvent } from "../tracking/mediaTimelines.ts";
 
@@ -44,10 +45,12 @@ export function createWebhookRoutes(db: Database): Hono {
 
       const event = eventBus.publish(normalizeWebhookEvent(source, payload.value));
       persistMediaEvent(db, event);
+      const notifications = await dispatchNotificationsForEvent(db, event);
 
       return c.json({
         ok: true,
         eventId: event.id,
+        notifications,
       });
     });
   }

@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/sweett00th/observarr/issues</Support>
   <Project>https://github.com/sweett00th/observarr</Project>
-  <Overview>Internal LAN-only ObservaRR observability app for home server media automation webhooks from Jellyseerr/Seerr, Jellyfin, Radarr, Sonarr, and SABnzbd. The container runs a Deno/Hono API and serves the React admin panel. SMS provider delivery is not implemented yet.</Overview>
+  <Overview>Internal LAN-only ObservaRR observability app for home server media automation webhooks from Jellyseerr/Seerr, Jellyfin, Radarr, Sonarr, and SABnzbd. The container runs a Deno/Hono API and serves the React admin panel. Textbelt SMS delivery is available only when explicitly enabled. Email delivery is not configured yet.</Overview>
   <Category>Tools:</Category>
   <TemplateURL>https://raw.githubusercontent.com/sweett00th/observarr/main/templates/observarr.xml</TemplateURL>
   <WebUI>http://[IP]:[PORT:3020]/</WebUI>
@@ -36,8 +36,7 @@
   <Config Name="SHARED_SECRET" Target="SHARED_SECRET" Default="" Mode="" Description="Optional webhook shared secret. When set, webhook requests must include the x-sms-secret header." Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="JELLYFIN_URL" Target="JELLYFIN_URL" Default="" Mode="" Description="Internal Jellyfin base URL used only by the server for profile import, for example http://192.168.1.50:8096." Type="Variable" Display="always" Required="false" Mask="false"/>
   <Config Name="JELLYFIN_API_KEY" Target="JELLYFIN_API_KEY" Default="" Mode="" Description="Jellyfin API key used only by the server for profile import. Imported users are not automatically subscribed to notifications." Type="Variable" Display="always" Required="false" Mask="true"/>
-  <Config Name="TWILIO_ACCOUNT_SID" Target="TWILIO_ACCOUNT_SID" Default="" Mode="" Description="Future Twilio account SID placeholder. Not used by the scaffold yet." Type="Variable" Display="always" Required="false" Mask="true"/>
-  <Config Name="TWILIO_AUTH_TOKEN" Target="TWILIO_AUTH_TOKEN" Default="" Mode="" Description="Future Twilio auth token placeholder. Not used by the scaffold yet." Type="Variable" Display="always" Required="false" Mask="true"/>
-  <Config Name="TWILIO_FROM" Target="TWILIO_FROM" Default="" Mode="" Description="Future Twilio sender phone number placeholder." Type="Variable" Display="always" Required="false" Mask="false"/>
-  <Config Name="SMS_TO" Target="SMS_TO" Default="" Mode="" Description="Future SMS recipient phone number placeholder." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="NOTIFICATIONS_ENABLED" Target="NOTIFICATIONS_ENABLED" Default="false" Mode="" Description="Set true only after configuring Textbelt and an explicitly opted-in test recipient. Defaults false to prevent accidental SMS." Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="TEXTBELT_KEY" Target="TEXTBELT_KEY" Default="" Mode="" Description="Secret Textbelt API key for SMS delivery. Required only when notifications are enabled." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="TEXTBELT_SENDER" Target="TEXTBELT_SENDER" Default="" Mode="" Description="Optional approved Textbelt sender name, such as ObservaRR or your configured sender." Type="Variable" Display="always" Required="false" Mask="false"/>
 </Container>

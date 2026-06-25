@@ -31,8 +31,11 @@ Current durable architecture decisions:
 - Internal port defaults to `3020`.
 - Keep the app LAN-only. Do not assume public proxying, Cloudflare, or NPM.
 - Secrets must be configured through environment variables in Unraid and must not be committed.
-- Twilio variables are placeholders only. Do not implement Twilio sending until requested.
+- Textbelt is the only supported SMS provider. Do not add Twilio, Telnyx, Plivo, SMTP, or other delivery providers without an explicit request.
+- `NOTIFICATIONS_ENABLED=false` is the safe default; real SMS requires `NOTIFICATIONS_ENABLED=true`, `TEXTBELT_KEY`, explicit profile SMS opt-in, and matching profile event preferences.
 - Jellyfin import uses server-only `JELLYFIN_URL` and `JELLYFIN_API_KEY`; never return or log the API key.
-- Notification profiles are future recipients, not ObservaRR login users, and imported people must not be automatically opted into notifications.
+- Notification profiles are future recipients, not ObservaRR login users, and imported people must not be automatically opted into notifications or SMS consent.
+- Event templates are global per `(source, event_type)`; profile preferences only determine recipient interest and future channel eligibility.
+- Email templates may be stored and previewed, but email transport is not implemented.
 - Imported Jellyfin avatars are cached under `/data/avatars` and served only through authenticated profile avatar routes.
 - Webhook routes may use the optional `SHARED_SECRET` header check via `x-sms-secret`.

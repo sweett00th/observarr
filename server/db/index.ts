@@ -3,9 +3,11 @@ import {
   getAdminPassword,
   getAdminUsername,
   getDbPath,
+  getProviderStatus,
   isProviderConfigured,
 } from "../lib/config.ts";
 import { hashPassword } from "../lib/passwords.ts";
+import { seedDefaultEventTemplates } from "../notifications/eventTemplates.ts";
 import { runMigrations } from "./migrations.ts";
 
 export type Database = DB;
@@ -44,6 +46,7 @@ export async function initializeDatabase(): Promise<Database> {
   const db = new DB(dbPath);
   db.execute("PRAGMA foreign_keys = ON");
   runMigrations(db);
+  seedDefaultEventTemplates(db);
   await bootstrapAdminUser(db);
 
   console.log(`SQLite database ready at ${dbPath}`);
@@ -95,6 +98,7 @@ export function getOverview(db: Database) {
     status: "online",
     counts: getOverviewCounts(db),
     providerConfigured: isProviderConfigured(),
+    providerStatus: getProviderStatus(),
   };
 }
 

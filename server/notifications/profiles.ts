@@ -39,6 +39,8 @@ export type NotificationProfile = {
   emailAddress: string | null;
   avatarFilename: string | null;
   avatarContentType: string | null;
+  smsOptedInAt: string | null;
+  smsOptedOutAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -68,6 +70,7 @@ export type ProfileInput = {
   enabled?: unknown;
   phoneNumber?: unknown;
   emailAddress?: unknown;
+  smsOptedIn?: unknown;
   identities?: unknown;
 };
 
@@ -147,7 +150,7 @@ export function getProfileDetails(db: Database, profileId: number): ProfileDetai
     identities: listIdentities(db, profileId),
     preferences: listPreferences(db, profileId),
     contactReadiness: {
-      sms: Boolean(profile.phoneNumber),
+      sms: Boolean(profile.phoneNumber && profile.smsOptedInAt && !profile.smsOptedOutAt),
       email: Boolean(profile.emailAddress),
     },
   };
@@ -220,6 +223,11 @@ export function updateProfile(
   if (normalized.emailAddress !== undefined) {
     assignments.push("email_address = ?");
     params.push(normalized.emailAddress);
+  }
+  if (normalized.smsOptedIn !== undefined) {
+    assignments.push("sms_opted_in_at = ?");
+    assignments.push("sms_opted_out_at = ?");
+    params.push(normalized.smsOptedIn ? now : null, normalized.smsOptedIn ? null : now);
   }
 
   try {
@@ -307,7 +315,7 @@ export function getProfile(db: Database, profileId: number): NotificationProfile
     db,
     `
     SELECT id, display_name, enabled, phone_number, email_address,
-      avatar_filename, avatar_content_type, created_at, updated_at
+      avatar_filename, avatar_content_type, sms_opted_in_at, sms_opted_out_at, created_at, updated_at
     FROM notification_profiles
     WHERE id = ?
   `,
@@ -469,6 +477,7 @@ function normalizeProfileInput(input: ProfileInput, options: { requireDisplayNam
     enabled?: boolean;
     phoneNumber?: string | null;
     emailAddress?: string | null;
+    smsOptedIn?: boolean;
     identities: Partial<Record<IdentityProvider, NormalizedIdentityInput | null>>;
   } = { identities: {} };
 
@@ -494,6 +503,13 @@ function normalizeProfileInput(input: ProfileInput, options: { requireDisplayNam
 
   if (input.emailAddress !== undefined) {
     result.emailAddress = normalizeEmailAddress(input.emailAddress, "Email address");
+  }
+
+  if (input.smsOptedIn !== undefined) {
+    if (typeof input.smsOptedIn !== "boolean") {
+      throw new ValidationError("SMS opt-in must be a boolean");
+    }
+    result.smsOptedIn = input.smsOptedIn;
   }
 
   for (const provider of ["jellyfin", "seerr"] as const) {
@@ -718,8 +734,10 @@ function mapProfile(row: unknown[]): NotificationProfile {
     emailAddress: row[4] === null ? null : String(row[4]),
     avatarFilename: row[5] === null ? null : String(row[5]),
     avatarContentType: row[6] === null ? null : String(row[6]),
-    createdAt: String(row[7]),
-    updatedAt: String(row[8]),
+    smsOptedInAt: row[7] === null ? null : String(row[7]),
+    smsOptedOutAt: row[8] === null ? null : String(row[8]),
+    createdAt: String(row[9]),
+    updatedAt: String(row[10]),
   };
 }
 

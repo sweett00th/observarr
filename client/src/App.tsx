@@ -6,7 +6,11 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import SmsIcon from "@mui/icons-material/Sms";
 import StorageIcon from "@mui/icons-material/Storage";
 import TuneIcon from "@mui/icons-material/Tune";
-import { NotificationProfilesActions, NotificationProfilesManager } from "./NotificationProfilesManager";
+import { MessageReceiptsManager } from "./MessageReceiptsManager";
+import {
+  NotificationProfilesActions,
+  NotificationProfilesManager,
+} from "./NotificationProfilesManager";
 import {
   Alert,
   AppBar,
@@ -18,6 +22,7 @@ import {
   Chip,
   CircularProgress,
   Container,
+  createTheme,
   CssBaseline,
   Drawer,
   FormControlLabel,
@@ -29,7 +34,6 @@ import {
   Toolbar,
   Tooltip,
   Typography,
-  createTheme,
 } from "@mui/material";
 import {
   type FormEvent,
@@ -77,6 +81,13 @@ type OverviewResponse = {
     mediaTimelines: number;
   };
   providerConfigured: boolean;
+  providerStatus: {
+    notificationsEnabled: boolean;
+    smsProvider: string;
+    textbeltKeyConfigured: boolean;
+    textbeltSenderConfigured: boolean;
+    emailConfigured: boolean;
+  };
 };
 
 type EventSourceName =
@@ -157,6 +168,7 @@ function App() {
   const [page, setPage] = useState<"dashboard" | "media-timelines">("dashboard");
   const [selectedMediaTimelineId, setSelectedMediaTimelineId] = useState<number | null>(null);
   const [notificationProfilesOpen, setNotificationProfilesOpen] = useState(false);
+  const [messageReceiptsOpen, setMessageReceiptsOpen] = useState(false);
   const [overviewRefreshKey, setOverviewRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -307,38 +319,51 @@ function App() {
           </Toolbar>
         </AppBar>
 
-        {authLoading ? (
-          <Stack alignItems="center" justifyContent="center" sx={{ minHeight: "70vh" }}>
-            <CircularProgress />
-          </Stack>
-        ) : user && page === "media-timelines" ? (
-          <MediaTimelinesPage
-            selectedMediaId={selectedMediaTimelineId}
-            onSelectMedia={setSelectedMediaTimelineId}
-            onBack={() => setPage("dashboard")}
-          />
-        ) : user ? (
-          <Dashboard
-            version={version}
-            status={backendStatus}
-            overview={overview}
-            onOpenMediaTimeline={openMediaTimeline}
-            onManageNotificationProfiles={() => setNotificationProfilesOpen(true)}
-            onNotificationProfilesChanged={() => setOverviewRefreshKey((value) => value + 1)}
-          />
-        ) : (
-          <LoginScreen
-            authStatus={authStatus}
-            error={loginError}
-            loading={loginLoading}
-            onSubmit={handleLogin}
-          />
-        )}
+        {authLoading
+          ? (
+            <Stack alignItems="center" justifyContent="center" sx={{ minHeight: "70vh" }}>
+              <CircularProgress />
+            </Stack>
+          )
+          : user && page === "media-timelines"
+          ? (
+            <MediaTimelinesPage
+              selectedMediaId={selectedMediaTimelineId}
+              onSelectMedia={setSelectedMediaTimelineId}
+              onBack={() => setPage("dashboard")}
+            />
+          )
+          : user
+          ? (
+            <Dashboard
+              version={version}
+              status={backendStatus}
+              overview={overview}
+              onOpenMediaTimeline={openMediaTimeline}
+              onManageMessageReceipts={() => setMessageReceiptsOpen(true)}
+              onManageNotificationProfiles={() => setNotificationProfilesOpen(true)}
+              onNotificationProfilesChanged={() => setOverviewRefreshKey((value) => value + 1)}
+            />
+          )
+          : (
+            <LoginScreen
+              authStatus={authStatus}
+              error={loginError}
+              loading={loginLoading}
+              onSubmit={handleLogin}
+            />
+          )}
         {user && (
           <ProfileDrawer
             user={user}
             open={profileOpen}
             onClose={() => setProfileOpen(false)}
+          />
+        )}
+        {user && (
+          <MessageReceiptsManager
+            open={messageReceiptsOpen}
+            onClose={() => setMessageReceiptsOpen(false)}
           />
         )}
         {user && (
@@ -522,7 +547,13 @@ function LoginScreen({
 
             {error && <Alert severity="error">{error}</Alert>}
 
-            <TextField name="username" label="Username" autoComplete="username" required fullWidth />
+            <TextField
+              name="username"
+              label="Username"
+              autoComplete="username"
+              required
+              fullWidth
+            />
             <TextField
               name="password"
               label="Password"
@@ -546,6 +577,7 @@ function Dashboard({
   status,
   overview,
   onOpenMediaTimeline,
+  onManageMessageReceipts,
   onManageNotificationProfiles,
   onNotificationProfilesChanged,
 }: {
@@ -553,6 +585,7 @@ function Dashboard({
   status: "loading" | "online" | "error";
   overview: OverviewResponse | null;
   onOpenMediaTimeline: (id: number | null) => void;
+  onManageMessageReceipts: () => void;
   onManageNotificationProfiles: () => void;
   onNotificationProfilesChanged: () => void;
 }) {
@@ -567,6 +600,8 @@ function Dashboard({
       title: "Message Receipts",
       body: `${overview?.counts.receipts ?? 0} receipts stored.`,
       icon: <StorageIcon />,
+      action: onManageMessageReceipts,
+      actionLabel: "Open Receipts",
     },
     {
       title: "Notification Profiles",
@@ -581,9 +616,13 @@ function Dashboard({
     },
     {
       title: "Provider Settings",
-      body: overview?.providerConfigured
-        ? "Twilio environment placeholders are configured."
-        : "Twilio environment placeholders are incomplete.",
+      body: overview?.providerStatus
+        ? `Textbelt SMS ${
+          overview.providerStatus.textbeltKeyConfigured ? "key configured" : "key missing"
+        }. Notifications ${
+          overview.providerStatus.notificationsEnabled ? "enabled" : "disabled"
+        }. Email not configured.`
+        : "Textbelt SMS status loading. Email not configured.",
       icon: <SettingsIcon />,
     },
   ];
@@ -603,11 +642,16 @@ function Dashboard({
                     <Chip
                       size="small"
                       label={status === "online" ? "Backend online" : status}
-                      color={status === "online" ? "success" : status === "error" ? "error" : "default"}
+                      color={status === "online"
+                        ? "success"
+                        : status === "error"
+                        ? "error"
+                        : "default"}
                     />
                   </Stack>
                   <Typography color="text.secondary">
-                    Internal dashboard for webhook status, provider configuration, and future notification controls.
+                    Internal dashboard for webhook status, provider configuration, and future
+                    notification controls.
                   </Typography>
                 </Stack>
               </CardContent>
@@ -650,25 +694,27 @@ function Dashboard({
                     <Typography variant="h6" component="h2">
                       {item.title}
                     </Typography>
-                  {"profileActions" in item && item.profileActions ? (
-                    <NotificationProfilesActions
-                      count={overview?.counts.profiles ?? 0}
-                      onManage={onManageNotificationProfiles}
-                      onImported={onNotificationProfilesChanged}
-                    />
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">
-                      {item.body}
-                    </Typography>
-                  )}
-                  {"action" in item && item.action && (
-                    <Button size="small" variant="outlined" onClick={item.action}>
-                      Open
-                    </Button>
-                  )}
-                </Stack>
-              </CardContent>
-            </Card>
+                    {"profileActions" in item && item.profileActions
+                      ? (
+                        <NotificationProfilesActions
+                          count={overview?.counts.profiles ?? 0}
+                          onManage={onManageNotificationProfiles}
+                          onImported={onNotificationProfilesChanged}
+                        />
+                      )
+                      : (
+                        <Typography variant="body2" color="text.secondary">
+                          {item.body}
+                        </Typography>
+                      )}
+                    {"action" in item && item.action && (
+                      <Button size="small" variant="outlined" onClick={item.action}>
+                        {"actionLabel" in item ? item.actionLabel : "Open"}
+                      </Button>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
             </Grid>
           ))}
         </Grid>
@@ -742,11 +788,13 @@ function MediaTimelinesPage({
 
     function refreshSelectedTimeline() {
       fetch(`/api/media-timelines/${selectedMediaId}`)
-        .then((response) => response.json() as Promise<{
-          ok: boolean;
-          media: MediaTimeline;
-          events: MediaTimelineEvent[];
-        }>)
+        .then((response) =>
+          response.json() as Promise<{
+            ok: boolean;
+            media: MediaTimeline;
+            events: MediaTimelineEvent[];
+          }>
+        )
         .then((data) => {
           if (!cancelled) {
             setSelected(data.media);
@@ -765,11 +813,16 @@ function MediaTimelinesPage({
   }, [selectedMediaId]);
 
   const filteredItems = items.filter((item) =>
-    `${item.title} ${item.mediaType ?? ""} ${item.source ?? ""}`.toLowerCase().includes(search.toLowerCase())
+    `${item.title} ${item.mediaType ?? ""} ${item.source ?? ""}`.toLowerCase().includes(
+      search.toLowerCase(),
+    )
   );
-  const sortedEvents = [...events].sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+  const sortedEvents = [...events].sort((left, right) =>
+    Date.parse(left.timestamp) - Date.parse(right.timestamp)
+  );
   const filteredIds = filteredItems.map((item) => item.id);
-  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.includes(id));
+  const allFilteredSelected = filteredIds.length > 0 &&
+    filteredIds.every((id) => selectedIds.includes(id));
 
   function toggleSelected(id: number) {
     setSelectedIds((current) =>
@@ -836,110 +889,115 @@ function MediaTimelinesPage({
           </Box>
         </Stack>
 
-        {loading ? (
-          <CircularProgress />
-        ) : items.length === 0 ? (
-          <Alert severity="info">
-            No media timelines yet. Send a media webhook event and it will appear here automatically.
-          </Alert>
-        ) : (
-          <Stack spacing={3}>
-            <Grid container spacing={3}>
-              <Grid item xs={12} md={4}>
-                <Card variant="outlined" sx={{ height: 560 }}>
-                  <CardContent sx={{ height: "100%" }}>
-                    <Stack spacing={2} sx={{ height: "100%" }}>
-                      <TextField
-                        size="small"
-                        label="Search media timelines"
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                        fullWidth
-                      />
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <FormControlLabel
-                          control={
-                            <Checkbox
-                              size="small"
-                              checked={allFilteredSelected}
-                              indeterminate={selectedIds.length > 0 && !allFilteredSelected}
-                              onChange={toggleAllFiltered}
-                            />
-                          }
-                          label="Select visible"
-                          sx={{ flexGrow: 1 }}
-                        />
-                        <Button
-                          size="small"
-                          color="error"
-                          variant="outlined"
-                          disabled={selectedIds.length === 0 || deleting}
-                          onClick={deleteSelected}
-                        >
-                          Delete {selectedIds.length || ""}
-                        </Button>
-                      </Stack>
-                      <Stack spacing={1} sx={{ overflowY: "auto", pr: 0.5 }}>
-                        {filteredItems.map((item) => (
-                          <Card
-                            key={item.id}
-                            variant="outlined"
-                            onClick={() => onSelectMedia(item.id)}
-                            sx={{
-                              cursor: "pointer",
-                              borderColor: item.id === selectedMediaId ? "primary.main" : undefined,
-                              bgcolor: item.id === selectedMediaId ? "action.selected" : undefined,
-                            }}
-                          >
-                            <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                              <Stack direction="row" spacing={1.5} alignItems="center">
-                                <Checkbox
-                                  size="small"
-                                  checked={selectedIds.includes(item.id)}
-                                  onClick={(event) => event.stopPropagation()}
-                                  onChange={() => toggleSelected(item.id)}
-                                  sx={{ p: 0 }}
-                                />
-                                <MediaThumbnail item={item} />
-                                <Stack spacing={0.5} sx={{ minWidth: 0 }}>
-                                  <Typography variant="subtitle1" noWrap>
-                                    {item.title}
-                                  </Typography>
-                                  <Typography variant="body2" color="text.secondary">
-                                    {item.mediaType ?? "media"} · {item.eventCount} events
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary" noWrap>
-                                    Last: {item.lastEventAt ? new Date(item.lastEventAt).toLocaleString() : "None"}
-                                  </Typography>
-                                </Stack>
-                              </Stack>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </Stack>
-                    </Stack>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              <Grid item xs={12} md={8}>
-                {selected ? (
-                  <MediaTimelineEventList media={selected} events={sortedEvents} />
-                ) : (
-                  <Alert severity="info">Select a media timeline.</Alert>
-                )}
-              </Grid>
-            </Grid>
-
-            {selected && (
+        {loading ? <CircularProgress /> : items.length === 0
+          ? (
+            <Alert severity="info">
+              No media timelines yet. Send a media webhook event and it will appear here
+              automatically.
+            </Alert>
+          )
+          : (
+            <Stack spacing={3}>
               <Grid container spacing={3}>
-                <Grid item xs={12}>
-                  <MediaTimelineGraph media={selected} events={sortedEvents} />
+                <Grid item xs={12} md={4}>
+                  <Card variant="outlined" sx={{ height: 560 }}>
+                    <CardContent sx={{ height: "100%" }}>
+                      <Stack spacing={2} sx={{ height: "100%" }}>
+                        <TextField
+                          size="small"
+                          label="Search media timelines"
+                          value={search}
+                          onChange={(event) => setSearch(event.target.value)}
+                          fullWidth
+                        />
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                size="small"
+                                checked={allFilteredSelected}
+                                indeterminate={selectedIds.length > 0 && !allFilteredSelected}
+                                onChange={toggleAllFiltered}
+                              />
+                            }
+                            label="Select visible"
+                            sx={{ flexGrow: 1 }}
+                          />
+                          <Button
+                            size="small"
+                            color="error"
+                            variant="outlined"
+                            disabled={selectedIds.length === 0 || deleting}
+                            onClick={deleteSelected}
+                          >
+                            Delete {selectedIds.length || ""}
+                          </Button>
+                        </Stack>
+                        <Stack spacing={1} sx={{ overflowY: "auto", pr: 0.5 }}>
+                          {filteredItems.map((item) => (
+                            <Card
+                              key={item.id}
+                              variant="outlined"
+                              onClick={() => onSelectMedia(item.id)}
+                              sx={{
+                                cursor: "pointer",
+                                borderColor: item.id === selectedMediaId
+                                  ? "primary.main"
+                                  : undefined,
+                                bgcolor: item.id === selectedMediaId
+                                  ? "action.selected"
+                                  : undefined,
+                              }}
+                            >
+                              <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
+                                <Stack direction="row" spacing={1.5} alignItems="center">
+                                  <Checkbox
+                                    size="small"
+                                    checked={selectedIds.includes(item.id)}
+                                    onClick={(event) => event.stopPropagation()}
+                                    onChange={() => toggleSelected(item.id)}
+                                    sx={{ p: 0 }}
+                                  />
+                                  <MediaThumbnail item={item} />
+                                  <Stack spacing={0.5} sx={{ minWidth: 0 }}>
+                                    <Typography variant="subtitle1" noWrap>
+                                      {item.title}
+                                    </Typography>
+                                    <Typography variant="body2" color="text.secondary">
+                                      {item.mediaType ?? "media"} · {item.eventCount} events
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      Last: {item.lastEventAt
+                                        ? new Date(item.lastEventAt).toLocaleString()
+                                        : "None"}
+                                    </Typography>
+                                  </Stack>
+                                </Stack>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </Stack>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                <Grid item xs={12} md={8}>
+                  {selected
+                    ? <MediaTimelineEventList media={selected} events={sortedEvents} />
+                    : <Alert severity="info">Select a media timeline.</Alert>}
                 </Grid>
               </Grid>
-            )}
-          </Stack>
-        )}
+
+              {selected && (
+                <Grid container spacing={3}>
+                  <Grid item xs={12}>
+                    <MediaTimelineGraph media={selected} events={sortedEvents} />
+                  </Grid>
+                </Grid>
+              )}
+            </Stack>
+          )}
       </Stack>
     </Container>
   );
@@ -1010,57 +1068,69 @@ function MediaTimelineEventList({
             </Typography>
           </Stack>
 
-          {events.length === 0 ? (
-            <Alert severity="info">No timeline events have been captured yet.</Alert>
-          ) : (
-            <Stack spacing={0} sx={{ maxHeight: 450, overflowY: "auto", pr: 1 }}>
-              {events.map((event, index) => {
-                const previous = events[index - 1];
-                const gapMs = previous
-                  ? Date.parse(event.timestamp) - Date.parse(previous.timestamp)
-                  : 0;
+          {events.length === 0
+            ? <Alert severity="info">No timeline events have been captured yet.</Alert>
+            : (
+              <Stack spacing={0} sx={{ maxHeight: 450, overflowY: "auto", pr: 1 }}>
+                {events.map((event, index) => {
+                  const previous = events[index - 1];
+                  const gapMs = previous
+                    ? Date.parse(event.timestamp) - Date.parse(previous.timestamp)
+                    : 0;
 
-                return (
-                  <Box key={event.id}>
-                    {previous && (
-                      <Typography
-                        variant="caption"
-                        color={gapMs > 10 * 60 * 1000 ? "warning.main" : "text.secondary"}
-                        sx={{ display: "block", ml: 5, my: 1 }}
-                      >
-                        Gap: {formatDuration(gapMs)}
-                      </Typography>
-                    )}
-                    <Stack direction="row" spacing={2} alignItems="flex-start">
-                      <Box
-                        sx={{
-                          width: 14,
-                          height: 14,
-                          borderRadius: "50%",
-                          bgcolor: sourceColors[event.source] ?? "grey.500",
-                          mt: 0.5,
-                          flexShrink: 0,
-                        }}
-                      />
-                      <Box sx={{ flexGrow: 1, pb: 2, borderBottom: "1px solid", borderColor: "divider" }}>
-                        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: "wrap" }}>
-                          <Chip size="small" label={sourceLabels[event.source] ?? event.source} />
-                          <Chip size="small" label={event.eventType} variant="outlined" />
-                          <Typography variant="caption" color="text.secondary">
-                            {new Date(event.timestamp).toLocaleString()}
-                          </Typography>
-                        </Stack>
-                        <Typography sx={{ mt: 1 }}>{event.title}</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {event.message}
+                  return (
+                    <Box key={event.id}>
+                      {previous && (
+                        <Typography
+                          variant="caption"
+                          color={gapMs > 10 * 60 * 1000 ? "warning.main" : "text.secondary"}
+                          sx={{ display: "block", ml: 5, my: 1 }}
+                        >
+                          Gap: {formatDuration(gapMs)}
                         </Typography>
-                      </Box>
-                    </Stack>
-                  </Box>
-                );
-              })}
-            </Stack>
-          )}
+                      )}
+                      <Stack direction="row" spacing={2} alignItems="flex-start">
+                        <Box
+                          sx={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: "50%",
+                            bgcolor: sourceColors[event.source] ?? "grey.500",
+                            mt: 0.5,
+                            flexShrink: 0,
+                          }}
+                        />
+                        <Box
+                          sx={{
+                            flexGrow: 1,
+                            pb: 2,
+                            borderBottom: "1px solid",
+                            borderColor: "divider",
+                          }}
+                        >
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            alignItems="center"
+                            sx={{ flexWrap: "wrap" }}
+                          >
+                            <Chip size="small" label={sourceLabels[event.source] ?? event.source} />
+                            <Chip size="small" label={event.eventType} variant="outlined" />
+                            <Typography variant="caption" color="text.secondary">
+                              {new Date(event.timestamp).toLocaleString()}
+                            </Typography>
+                          </Stack>
+                          <Typography sx={{ mt: 1 }}>{event.title}</Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            {event.message}
+                          </Typography>
+                        </Box>
+                      </Stack>
+                    </Box>
+                  );
+                })}
+              </Stack>
+            )}
         </Stack>
       </CardContent>
     </Card>
@@ -1120,7 +1190,9 @@ function MediaTimelineGraph({
             {events.map((event, index) => {
               const percent = eventPosition(event.timestamp);
               const previous = events[index - 1];
-              const gapMs = previous ? Date.parse(event.timestamp) - Date.parse(previous.timestamp) : 0;
+              const gapMs = previous
+                ? Date.parse(event.timestamp) - Date.parse(previous.timestamp)
+                : 0;
 
               return (
                 <Tooltip
@@ -1128,11 +1200,19 @@ function MediaTimelineGraph({
                   arrow
                   title={
                     <Stack spacing={0.5}>
-                      <Typography variant="caption">{new Date(event.timestamp).toLocaleString()}</Typography>
-                      <Typography variant="body2">{sourceLabels[event.source]} · {event.eventType}</Typography>
+                      <Typography variant="caption">
+                        {new Date(event.timestamp).toLocaleString()}
+                      </Typography>
+                      <Typography variant="body2">
+                        {sourceLabels[event.source]} · {event.eventType}
+                      </Typography>
                       <Typography variant="body2">{event.title}</Typography>
                       <Typography variant="caption">{event.message}</Typography>
-                      {previous && <Typography variant="caption">Since previous: {formatDuration(gapMs)}</Typography>}
+                      {previous && (
+                        <Typography variant="caption">
+                          Since previous: {formatDuration(gapMs)}
+                        </Typography>
+                      )}
                     </Stack>
                   }
                 >
@@ -1155,7 +1235,9 @@ function MediaTimelineGraph({
                         height: 24,
                         borderRadius: "50%",
                         bgcolor: sourceColors[event.source] ?? "grey.500",
-                        border: event.severity === "error" ? "3px solid #ef4444" : "3px solid white",
+                        border: event.severity === "error"
+                          ? "3px solid #ef4444"
+                          : "3px solid white",
                         boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
                       }}
                     />
@@ -1319,7 +1401,10 @@ function EventConsole({
     const maxHeight = Math.max(260, window.innerHeight - 72);
 
     function handlePointerMove(moveEvent: PointerEvent) {
-      const nextHeight = Math.min(maxHeight, Math.max(260, startHeight + startY - moveEvent.clientY));
+      const nextHeight = Math.min(
+        maxHeight,
+        Math.max(260, startHeight + startY - moveEvent.clientY),
+      );
       setDrawerHeight(nextHeight);
     }
 
@@ -1448,19 +1533,21 @@ function EventConsole({
               fontSize: 13,
             }}
           >
-            {filteredEvents.length === 0 ? (
-              <Typography sx={{ color: "#6b7280", fontFamily: "monospace", py: 2 }}>
-                No events in the current filter.
-              </Typography>
-            ) : (
-              filteredEvents.map((event) => (
-                <EventRow
-                  key={event.id}
-                  event={event}
-                  onOpenMediaTimeline={onOpenMediaTimeline}
-                />
-              ))
-            )}
+            {filteredEvents.length === 0
+              ? (
+                <Typography sx={{ color: "#6b7280", fontFamily: "monospace", py: 2 }}>
+                  No events in the current filter.
+                </Typography>
+              )
+              : (
+                filteredEvents.map((event) => (
+                  <EventRow
+                    key={event.id}
+                    event={event}
+                    onOpenMediaTimeline={onOpenMediaTimeline}
+                  />
+                ))
+              )}
           </Box>
         </Box>
       )}
@@ -1501,7 +1588,10 @@ function EventRow({
     const maxHeight = Math.max(160, window.innerHeight - 180);
 
     function handlePointerMove(moveEvent: PointerEvent) {
-      const nextHeight = Math.min(maxHeight, Math.max(120, startHeight + moveEvent.clientY - startY));
+      const nextHeight = Math.min(
+        maxHeight,
+        Math.max(120, startHeight + moveEvent.clientY - startY),
+      );
       setPayloadHeight(nextHeight);
     }
 
@@ -1536,7 +1626,9 @@ function EventRow({
       setMediaTimelineId(data.media.id);
       onOpenMediaTimeline(data.media.id);
     } catch (caughtError) {
-      setTrackError(caughtError instanceof Error ? caughtError.message : "Could not find media timeline");
+      setTrackError(
+        caughtError instanceof Error ? caughtError.message : "Could not find media timeline",
+      );
     } finally {
       setOpeningTimeline(false);
     }
@@ -1564,7 +1656,9 @@ function EventRow({
           aria-label={expanded ? "Collapse event details" : "Expand event details"}
           sx={{ color: hasRawDetails ? "#9ca3af" : "#374151", p: 0.25 }}
         >
-          {expanded ? <KeyboardArrowDownIcon fontSize="small" /> : <KeyboardArrowRightIcon fontSize="small" />}
+          {expanded
+            ? <KeyboardArrowDownIcon fontSize="small" />
+            : <KeyboardArrowRightIcon fontSize="small" />}
         </IconButton>
         <Typography sx={{ color: "#6b7280", minWidth: 82, fontFamily: "monospace", fontSize: 12 }}>
           {new Date(event.timestamp).toLocaleTimeString()}
@@ -1583,7 +1677,9 @@ function EventRow({
         >
           {sourceLabels[event.source]}
         </Typography>
-        <Typography sx={{ color: severityColor, minWidth: 92, fontFamily: "monospace", fontSize: 12 }}>
+        <Typography
+          sx={{ color: severityColor, minWidth: 92, fontFamily: "monospace", fontSize: 12 }}
+        >
           {event.eventType}
         </Typography>
         <Typography sx={{ color: "#f9fafb", fontFamily: "monospace", fontSize: 13 }}>
@@ -1591,27 +1687,29 @@ function EventRow({
           {event.message ? ` - ${event.message}` : ""}
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
-        {mediaTimelineId ? (
-          <Button
-            size="small"
-            onClick={(clickEvent) => {
-              clickEvent.stopPropagation();
-              onOpenMediaTimeline(mediaTimelineId);
-            }}
-            sx={{ color: "#d1d5db", minWidth: 112 }}
-          >
-            Open timeline
-          </Button>
-        ) : (
-          <Button
-            size="small"
-            onClick={handleOpenMediaTimeline}
-            disabled={openingTimeline}
-            sx={{ color: "#d1d5db", minWidth: 112 }}
-          >
-            {openingTimeline ? "Opening" : "Open timeline"}
-          </Button>
-        )}
+        {mediaTimelineId
+          ? (
+            <Button
+              size="small"
+              onClick={(clickEvent) => {
+                clickEvent.stopPropagation();
+                onOpenMediaTimeline(mediaTimelineId);
+              }}
+              sx={{ color: "#d1d5db", minWidth: 112 }}
+            >
+              Open timeline
+            </Button>
+          )
+          : (
+            <Button
+              size="small"
+              onClick={handleOpenMediaTimeline}
+              disabled={openingTimeline}
+              sx={{ color: "#d1d5db", minWidth: 112 }}
+            >
+              {openingTimeline ? "Opening" : "Open timeline"}
+            </Button>
+          )}
       </Stack>
       {trackError && (
         <Typography sx={{ color: "#f87171", ml: 4, mb: 1, fontFamily: "monospace", fontSize: 12 }}>
