@@ -1,6 +1,6 @@
 Applied database migration 1: initial_persistence_and_auth
 Initial admin user 'admin' created.
-SQLite database ready at .smoke-events/sms-gateway.db
+SQLite database ready at .smoke-events/observarr.db
 GET /health 200 1ms
 GET /api/events/recent 401 0ms
 POST /api/auth/login 200 43ms

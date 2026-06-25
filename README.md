@@ -13,8 +13,8 @@ No Twilio sending is implemented yet.
 - Live events: ephemeral in-memory Event Console streamed with Server-Sent Events
 - Media timelines: identified media events persisted for audit and gap analysis
 - Production: one Docker container
-- Image: `ghcr.io/sweett00th/sms-gateway`
-- Unraid template: `templates/sms-gateway.xml`
+- Image: `ghcr.io/sweett00th/observarr`
+- Unraid template: `templates/observarr.xml`
 
 In production, the Deno/Hono server handles API and webhook routes and serves the built React app from `client/dist`.
 
@@ -27,7 +27,7 @@ SQLite uses `deno.land/x/sqlite@v3.9.1`, a WASM-based Deno SQLite module. That k
 Start the backend:
 
 ```powershell
-$env:DB_PATH=".data/sms-gateway.db"
+$env:DB_PATH=".data/observarr.db"
 $env:ADMIN_PASSWORD="change-me"
 deno task dev:server
 ```
@@ -175,17 +175,17 @@ MOCK_EVENT_INTERVAL_MS=2500
 The app stores local state in one SQLite database file. By default:
 
 ```text
-/data/sms-gateway.db
+/data/observarr.db
 ```
 
-Override it with `DB_PATH`. In Unraid, `/mnt/user/appdata/sms-gateway` is mounted to `/data`, so the database survives container updates.
+Override it with `DB_PATH`. In Unraid, `/mnt/user/appdata/observarr` is mounted to `/data`, so the database survives container updates.
 
 Migrations run automatically on startup and are tracked in `schema_migrations`. Current tables include `users`, `sessions`, `message_receipts`, `notification_profiles`, `event_templates`, `provider_settings`, `webhook_events`, `media_items`, and `media_events`. Older development tables `tracked_media` and `tracked_media_events` may also exist on upgraded local databases.
 
 To reset the app in local development, stop the server and delete the SQLite file you used for `DB_PATH`, for example:
 
 ```powershell
-Remove-Item .data\sms-gateway.db
+Remove-Item .data\observarr.db
 ```
 
 ## Local Auth
@@ -245,7 +245,7 @@ curl -Method POST http://localhost:3020/webhook/radarr `
 Build locally:
 
 ```powershell
-docker build -t sms-gateway .
+docker build -t observarr .
 ```
 
 Run locally:
@@ -254,7 +254,7 @@ Run locally:
 docker run --rm -p 3020:3020 `
   -e PORT=3020 `
   -e TZ=America/New_York `
-  -e DB_PATH=/data/sms-gateway.db `
+  -e DB_PATH=/data/observarr.db `
   -e ADMIN_USERNAME=admin `
   -e ADMIN_PASSWORD=change-me `
   -e SESSION_TTL_DAYS=7 `
@@ -262,7 +262,7 @@ docker run --rm -p 3020:3020 `
   -e EVENT_BUFFER_MINUTES=10 `
   -e EVENT_BUFFER_MAX=250 `
   -v ${PWD}\.data:/data `
-  sms-gateway
+  observarr
 ```
 
 Open the admin panel:
@@ -280,7 +280,7 @@ The final image runs the Deno server, not the Vite dev server. The Docker build 
 Pull requests build but do not push images. Pushes to `main` and tags publish to:
 
 ```text
-ghcr.io/sweett00th/sms-gateway
+ghcr.io/sweett00th/observarr
 ```
 
 Expected tags include:
@@ -294,7 +294,7 @@ Expected tags include:
 The Unraid template points to:
 
 ```text
-ghcr.io/sweett00th/sms-gateway:latest
+ghcr.io/sweett00th/observarr:latest
 ```
 
 The WebUI opens the admin panel at:
@@ -306,7 +306,7 @@ http://[IP]:[PORT:3020]/
 To add the custom template repository in Unraid, use:
 
 ```text
-https://github.com/sweett00th/sms-gateway
+https://github.com/sweett00th/observarr
 ```
 
 Keep the app LAN-only. This scaffold does not assume public proxying, Cloudflare, NPM, or any external ingress.
@@ -321,7 +321,7 @@ Copy `.env.example` for local reference only. In Unraid, set values through the 
 | --- | --- | --- |
 | `PORT` | No | HTTP port inside the container. Defaults to `3020`. |
 | `TZ` | No | Timezone. Defaults to `America/New_York` in the Unraid template. |
-| `DB_PATH` | No | SQLite database path. Defaults to `/data/sms-gateway.db`. |
+| `DB_PATH` | No | SQLite database path. Defaults to `/data/observarr.db`. |
 | `ADMIN_USERNAME` | Bootstrap | Initial admin username used only when no users exist. Defaults to `admin`. |
 | `ADMIN_PASSWORD` | Bootstrap | Initial admin password used only when no users exist. No safe default; set in Unraid before first start. |
 | `SESSION_TTL_DAYS` | No | Server-side session lifetime in days. Defaults to `7`. |
