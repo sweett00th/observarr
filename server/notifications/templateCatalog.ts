@@ -205,6 +205,21 @@ const jellyfinVariables: TemplateVariable[] = [
   },
 ];
 
+const consentVariables: TemplateVariable[] = [
+  {
+    name: "optInKeyword",
+    label: "Opt-in keyword",
+    description: "Recommended keyword the recipient can reply with to confirm SMS opt-in.",
+    example: "YES",
+  },
+  {
+    name: "optOutKeyword",
+    label: "Opt-out keyword",
+    description: "Recommended keyword the recipient can reply with to opt out.",
+    example: "STOP",
+  },
+];
+
 function event(
   source: string,
   sourceLabel: string,
@@ -385,6 +400,21 @@ export const templateCatalog: TemplateCatalogEvent[] = [
     "Health warning",
     "ObservaRR reported a health warning.",
   ),
+  {
+    ...event(
+      "system",
+      "System",
+      "sms_opt_in_welcome",
+      "SMS opt-in welcome",
+      "Consent message sent manually before a phone number can receive ObservaRR SMS notifications.",
+      consentVariables,
+    ),
+    defaultSmsTemplate:
+      "ObservaRR: Hi {profileName}. Reply {optInKeyword} to opt in to ObservaRR SMS notifications. Reply {optOutKeyword} to opt out.",
+    defaultEmailSubjectTemplate: "[ObservaRR] SMS opt-in welcome",
+    defaultEmailBodyTemplate:
+      "{eventMessage}\n\nProfile: {profileName}\nOpt-in keyword: {optInKeyword}\nOpt-out keyword: {optOutKeyword}",
+  },
 ];
 
 const catalogByKey = new Map(

@@ -1,8 +1,12 @@
-﻿# ObservaRR
+# ObservaRR
 
-Internal Unraid Docker app for receiving home server webhooks, managing future notification recipient profiles, and later sending notifications. The app runs a Deno/Hono backend, a Vite React admin panel, local SQLite persistence, local username/password auth, Docker packaging, GHCR publishing, and an Unraid template.
+Internal Unraid Docker app for receiving home server webhooks, managing future notification
+recipient profiles, and later sending notifications. The app runs a Deno/Hono backend, a Vite React
+admin panel, local SQLite persistence, local username/password auth, Docker packaging, GHCR
+publishing, and an Unraid template.
 
-SMS delivery is implemented through Textbelt and is disabled by default. Email templates are stored for future use, but email delivery is not implemented.
+SMS delivery is implemented through Textbelt and is disabled by default. Email templates are stored
+for future use, but email delivery is not implemented.
 
 ## Architecture
 
@@ -12,18 +16,23 @@ SMS delivery is implemented through Textbelt and is disabled by default. Email t
 - Auth: local username/password with server-side SQLite sessions
 - Live events: ephemeral in-memory Event Console streamed with Server-Sent Events
 - Media timelines: identified media events persisted for audit and gap analysis
-- Notification profiles: local recipient profiles with contacts, SMS consent, external mappings, preferences, and Jellyfin avatar imports
+- Notification profiles: local recipient profiles with contacts, SMS consent, external mappings,
+  preferences, and Jellyfin avatar imports
 - Event templates: global SMS/email templates per source/event with safe `{variableName}` rendering
 - SMS receipts: durable Textbelt submission and delivery-status receipts
 - Production: one Docker container
 - Image: `ghcr.io/sweett00th/observarr`
 - Unraid template: `templates/observarr.xml`
 
-In production, the Deno/Hono server handles API and webhook routes and serves the built React app from `client/dist`.
+In production, the Deno/Hono server handles API and webhook routes and serves the built React app
+from `client/dist`.
 
-In local development, the backend runs on port `3020` and Vite runs separately. Vite proxies `/api`, `/health`, and `/webhook` to `http://localhost:3020`.
+In local development, the backend runs on port `3020` and Vite runs separately. Vite proxies `/api`,
+`/health`, and `/webhook` to `http://localhost:3020`.
 
-SQLite uses `deno.land/x/sqlite@v3.9.1`, a WASM-based Deno SQLite module. That keeps the runtime self-contained and avoids `--allow-ffi`; the tradeoff is that this library does not support SQLite WAL mode.
+SQLite uses `deno.land/x/sqlite@v3.9.1`, a WASM-based Deno SQLite module. That keeps the runtime
+self-contained and avoids `--allow-ffi`; the tradeoff is that this library does not support SQLite
+WAL mode.
 
 ## Local Development
 
@@ -86,35 +95,54 @@ npm --prefix client run typecheck
 - `GET /api/auth/me` returns the current user or `401`.
 - `POST /api/auth/login` creates a server-side session and sets an HttpOnly cookie.
 - `POST /api/auth/logout` deletes the current session and clears the cookie.
-- `POST /api/auth/password` changes the current user's password after verifying the current password.
-- `GET /api/admin/overview` returns SQLite-backed dashboard counts and provider configuration status. It requires login.
+- `POST /api/auth/password` changes the current user's password after verifying the current
+  password.
+- `GET /api/admin/overview` returns SQLite-backed dashboard counts and provider configuration
+  status. It requires login.
 - `GET /api/events/recent` returns current in-memory Event Console events. It requires login.
-- `GET /api/events/stream` streams live Event Console events with Server-Sent Events. It requires login.
+- `GET /api/events/stream` streams live Event Console events with Server-Sent Events. It requires
+  login.
 - `GET /api/media-timelines` lists persisted media timelines. It requires login.
 - `DELETE /api/media-timelines` deletes selected media timelines by id. It requires login.
-- `POST /api/media-timelines/from-event` resolves the media timeline for a live event. It requires login.
+- `POST /api/media-timelines/from-event` resolves the media timeline for a live event. It requires
+  login.
 - `GET /api/media-timelines/:id` returns a media timeline. It requires login.
-- `GET /api/notification-profiles/event-catalog` returns the stable notification event catalog. It requires login.
-- `GET /api/notification-profiles?query=` searches notification recipient profiles. It requires login.
-- `POST /api/notification-profiles` creates a manual notification recipient profile. It requires login.
-- `GET /api/notification-profiles/:id` returns profile details, identities, and saved preferences. It requires login.
-- `PATCH /api/notification-profiles/:id` updates profile identity, contacts, enabled state, and external mappings. It requires login.
-- `PUT /api/notification-profiles/:id/preferences` replaces the saved event preference set. It requires login.
+- `GET /api/notification-profiles/event-catalog` returns the stable notification event catalog. It
+  requires login.
+- `GET /api/notification-profiles?query=` searches notification recipient profiles. It requires
+  login.
+- `POST /api/notification-profiles` creates a manual notification recipient profile. It requires
+  login.
+- `GET /api/notification-profiles/:id` returns profile details, identities, and saved preferences.
+  It requires login.
+- `PATCH /api/notification-profiles/:id` updates profile identity, contacts, enabled state, and
+  external mappings. It requires login.
+- `PUT /api/notification-profiles/:id/preferences` replaces the saved event preference set. It
+  requires login.
 - `GET /api/notification-profiles/:id/avatar` streams a cached imported avatar. It requires login.
-- `GET /api/integrations/jellyfin/status` returns safe Jellyfin configuration status. It requires login.
-- `POST /api/integrations/jellyfin/import-users` imports Jellyfin users into notification profiles. It requires login.
-- `GET /api/event-templates/catalog` returns the canonical template catalog, variables, defaults, and current template summaries. It requires login.
+- `GET /api/integrations/jellyfin/status` returns safe Jellyfin configuration status. It requires
+  login.
+- `POST /api/integrations/jellyfin/import-users` imports Jellyfin users into notification profiles.
+  It requires login.
+- `GET /api/event-templates/catalog` returns the canonical template catalog, variables, defaults,
+  and current template summaries. It requires login.
 - `GET /api/event-templates` lists global event templates. It requires login.
 - `GET /api/event-templates/:source/:eventType` returns one global template. It requires login.
-- `PATCH /api/event-templates/:source/:eventType` edits one global template and increments its revision. It requires login.
-- `POST /api/event-templates/:source/:eventType/preview` renders a sample preview and sends no messages. It requires login.
-- `POST /api/event-templates/:source/:eventType/reset` resets one global template to the catalog default. It requires login.
+- `PATCH /api/event-templates/:source/:eventType` edits one global template and increments its
+  revision. It requires login.
+- `POST /api/event-templates/:source/:eventType/preview` renders a sample preview and sends no
+  messages. It requires login.
+- `POST /api/event-templates/:source/:eventType/reset` resets one global template to the catalog
+  default. It requires login.
 - `GET /api/message-receipts` searches durable SMS receipts. It requires login.
 - `GET /api/message-receipts/:id` returns safe receipt details. It requires login.
-- `POST /webhook/test` accepts JSON, logs a summary, emits a live test event, and returns the summary. It does not send SMS.
-- `POST /webhook/jellyfin`, `/webhook/seerr`, `/webhook/radarr`, `/webhook/sonarr`, and `/webhook/sabnzbd` accept JSON and emit normalized live events. They do not send SMS.
+- `POST /webhook/test` accepts JSON, logs a summary, emits a live test event, and returns the
+  summary. It does not send SMS.
+- `POST /webhook/jellyfin`, `/webhook/seerr`, `/webhook/radarr`, `/webhook/sonarr`, and
+  `/webhook/sabnzbd` accept JSON and emit normalized live events. They do not send SMS.
 
-Unknown `/api/*` and `/webhook/*` routes return JSON 404 responses. Unknown non-API routes fall back to the React `index.html` for future client-side routing.
+Unknown `/api/*` and `/webhook/*` routes return JSON 404 responses. Unknown non-API routes fall back
+to the React `index.html` for future client-side routing.
 
 ## Webhook Secret
 
@@ -124,20 +152,26 @@ Webhook routes support an optional shared secret. If `SHARED_SECRET` is set, req
 x-sms-secret: your-secret
 ```
 
-If `SHARED_SECRET` is unset, webhook requests are allowed and the server logs a startup warning. Set it in Unraid for normal use.
+If `SHARED_SECRET` is unset, webhook requests are allowed and the server logs a startup warning. Set
+it in Unraid for normal use.
 
 ## Event Console
 
-The authenticated app includes a collapsible terminal-like Event Console fixed to the bottom of the viewport. It shows recent webhook events and streams new events live with Server-Sent Events from `/api/events/stream`.
+The authenticated app includes a collapsible terminal-like Event Console fixed to the bottom of the
+viewport. It shows recent webhook events and streams new events live with Server-Sent Events from
+`/api/events/stream`.
 
 The Event Console buffer is intentionally ephemeral and in-memory only:
 
 - Events are lost when the container restarts.
 - The server keeps only a short runtime ring buffer.
 
-Separately, every identifiable media webhook event is persisted to Media Timelines. If an event can be associated to a movie or series, the app creates or updates that media item and appends the event to its timeline.
+Separately, every identifiable media webhook event is persisted to Media Timelines. If an event can
+be associated to a movie or series, the app creates or updates that media item and appends the event
+to its timeline.
 
-The default ring buffer keeps events from the last `10` minutes and caps the list at `250` events. Override those with:
+The default ring buffer keeps events from the last `10` minutes and caps the list at `250` events.
+Override those with:
 
 ```env
 EVENT_BUFFER_MINUTES=10
@@ -145,31 +179,53 @@ EVENT_BUFFER_MAX=250
 EVENT_RAW_MAX_BYTES=20000
 ```
 
-External apps still need to be configured to push webhooks into this app. This feature does not poll Jellyfin, Jellyseerr/Seerr, Radarr, Sonarr, SABnzbd, or any other app API.
+External apps still need to be configured to push webhooks into this app. This feature does not poll
+Jellyfin, Jellyseerr/Seerr, Radarr, Sonarr, SABnzbd, or any other app API.
 
-The console supports source filters for Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, and System/Test. Webhook payloads are normalized into compact events. Expanding an event row shows the sanitized raw webhook payload. Obvious secret-looking fields such as tokens, passwords, API keys, and authorization headers are recursively redacted. If the sanitized raw payload exceeds `EVENT_RAW_MAX_BYTES`, the expanded view shows a truncated preview with byte metadata.
+The console supports source filters for Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, and System/Test.
+Webhook payloads are normalized into compact events. Expanding an event row shows the sanitized raw
+webhook payload. Obvious secret-looking fields such as tokens, passwords, API keys, and
+authorization headers are recursively redacted. If the sanitized raw payload exceeds
+`EVENT_RAW_MAX_BYTES`, the expanded view shows a truncated preview with byte metadata.
 
 ## Media Timelines
 
-The dashboard includes a `Media Timelines` widget. Open it to see media items identified from webhook events. The page has a searchable media list, a scrollable sorted event list for the selected item, and a horizontal timeline graph with source-colored dots. Hover over a dot to see event details and the gap from the previous step.
+The dashboard includes a `Media Timelines` widget. Open it to see media items identified from
+webhook events. The page has a searchable media list, a scrollable sorted event list for the
+selected item, and a horizontal timeline graph with source-colored dots. Hover over a dot to see
+event details and the gap from the previous step.
 
-Media timeline rows can be selected individually or in bulk from the left column and deleted manually. Deleting a media item removes its associated timeline events through SQLite cascade cleanup.
+Media timeline rows can be selected individually or in bulk from the left column and deleted
+manually. Deleting a media item removes its associated timeline events through SQLite cascade
+cleanup.
 
 Timeline persistence is automatic:
 
 1. A webhook event arrives.
 2. The server normalizes the event.
-3. The server identifies the distinct piece of media using strong IDs, structured fields, or loose normalized title matching.
+3. The server identifies the distinct piece of media using strong IDs, structured fields, or loose
+   normalized title matching.
 4. If the media has been seen before, the event is appended to that media timeline.
 5. If the media is new, a timeline is created and the event is appended.
 
-Media matching is intentionally loose in this pass. The app first tries derived keys from common fields such as `movie.title`, `series.title`, `tmdbId`, `imdbId`, `tvdbId`, `title`, `subject`, and media type hints. If that misses, incoming events are compared against existing media titles using normalized text from the event title, message, entity title, and sanitized raw payload. Source-specific matching can be improved later as real payload samples arrive.
+Media matching is intentionally loose in this pass. The app first tries derived keys from common
+fields such as `movie.title`, `series.title`, `tmdbId`, `imdbId`, `tvdbId`, `title`, `subject`, and
+media type hints. If that misses, incoming events are compared against existing media titles using
+normalized text from the event title, message, entity title, and sanitized raw payload.
+Source-specific matching can be improved later as real payload samples arrive.
 
-Media Timelines also stores a thumbnail URL when webhook payloads provide one through common poster/image fields such as `posterUrl`, `thumbnailUrl`, `imageUrl`, `movie.remotePoster`, `series.remotePoster`, or image arrays from media managers. If no thumbnail is available, the UI shows an initial-based fallback.
+Media Timelines also stores a thumbnail URL when webhook payloads provide one through common
+poster/image fields such as `posterUrl`, `thumbnailUrl`, `imageUrl`, `movie.remotePoster`,
+`series.remotePoster`, or image arrays from media managers. If no thumbnail is available, the UI
+shows an initial-based fallback.
 
-When an event type normalizes to `MEDIA_AVAILABLE`, the media item is marked available and scheduled for cleanup after 14 days. Cleanup runs once on startup and then once per day while the container is running.
+When an event type normalizes to `MEDIA_AVAILABLE`, the media item is marked available and scheduled
+for cleanup after 14 days. Cleanup runs once on startup and then once per day while the container is
+running.
 
-For local development, the repo includes a mock webhook event generator. It posts synthetic Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, and test events into the same webhook endpoints external apps use:
+For local development, the repo includes a mock webhook event generator. It posts synthetic
+Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, and test events into the same webhook endpoints external
+apps use:
 
 ```powershell
 deno task mock:events
@@ -181,9 +237,13 @@ Send one event and exit:
 deno task mock:events:once
 ```
 
-The tool emits realistic multi-step media journeys. A movie flow looks like Seerr request, Seerr approval, Radarr grab, SABnzbd download, Radarr import, Seerr available, Jellyfin library update, and Jellyfin playback. Series flows use Sonarr in the equivalent steps. Events in one journey share media IDs/titles so Media Timelines can reconstruct end-to-end behavior.
+The tool emits realistic multi-step media journeys. A movie flow looks like Seerr request, Seerr
+approval, Radarr grab, SABnzbd download, Radarr import, Seerr available, Jellyfin library update,
+and Jellyfin playback. Series flows use Sonarr in the equivalent steps. Events in one journey share
+media IDs/titles so Media Timelines can reconstruct end-to-end behavior.
 
-The tool reads `.env`, sends `SHARED_SECRET` as `x-sms-secret` when set, and defaults to `http://localhost:$PORT`. Optional local knobs:
+The tool reads `.env`, sends `SHARED_SECRET` as `x-sms-secret` when set, and defaults to
+`http://localhost:$PORT`. Optional local knobs:
 
 ```env
 WEBHOOK_BASE_URL=http://localhost:3020
@@ -192,7 +252,8 @@ MOCK_EVENT_INTERVAL_MS=2500
 
 ## Notification Profiles
 
-The authenticated dashboard includes a Notification Profiles management dialog. These profiles represent future notification recipients and are separate from local ObservaRR admin login users.
+The authenticated dashboard includes a Notification Profiles management dialog. These profiles
+represent future notification recipients and are separate from local ObservaRR admin login users.
 
 Profiles store:
 
@@ -203,13 +264,18 @@ Profiles store:
 - Imported Jellyfin avatar metadata
 - Event-specific interest, future SMS preference, and future email preference
 
-Saving profile preferences does not send messages by itself. Imported Jellyfin users are not automatically subscribed to any notification event, delivery channel, or SMS consent.
+Saving profile preferences does not send messages by itself. Imported Jellyfin users are not
+automatically subscribed to any notification event, delivery channel, or SMS consent.
 
-The stable template/event catalog is served by the backend at `/api/event-templates/catalog` so the API and UI use the same source, event type, variable, and default-template values.
+The stable template/event catalog is served by the backend at `/api/event-templates/catalog` so the
+API and UI use the same source, event type, variable, and default-template values.
 
 ## Event Templates and SMS Delivery
 
-Event templates are global per `(source, event_type)`. A profile preference decides whether that recipient is interested in the event and wants SMS or email, but it does not own a private copy of the template. Editing a template from a profile event row changes it for every profile subscribed to that event.
+Event templates are global per `(source, event_type)`. A profile preference decides whether that
+recipient is interested in the event and wants SMS or email, but it does not own a private copy of
+the template. Editing a template from a profile event row changes it for every profile subscribed to
+that event.
 
 Template syntax is deliberately small:
 
@@ -217,9 +283,13 @@ Template syntax is deliberately small:
 {variableName}
 ```
 
-Use `{{` for a literal `{` and `}}` for a literal `}`. Only variables listed by `/api/event-templates/catalog` are allowed. Unknown variables and malformed braces block saving. Templates cannot execute JavaScript, expressions, loops, conditionals, dot paths, or arbitrary payload access.
+Use `{{` for a literal `{` and `}}` for a literal `}`. Only variables listed by
+`/api/event-templates/catalog` are allowed. Unknown variables and malformed braces block saving.
+Templates cannot execute JavaScript, expressions, loops, conditionals, dot paths, or arbitrary
+payload access.
 
-SMS templates and email subject/body templates are stored and previewed. Email transport is not configured yet, so ObservaRR does not send email and does not create fake email receipts.
+SMS templates and email subject/body templates are stored and previewed. Email transport is not
+configured yet, so ObservaRR does not send email and does not create fake email receipts.
 
 Textbelt is the only SMS provider. Real SMS requires all of these:
 
@@ -231,11 +301,14 @@ Textbelt is the only SMS provider. Real SMS requires all of these:
 - profile event preference enabled with SMS selected
 - a valid global SMS template for that source/event
 
-Imported Jellyfin profiles are not automatically opted into SMS. `/webhook/test` and Event Console test events never send SMS.
+Imported Jellyfin profiles are not automatically opted into SMS. `/webhook/test` and Event Console
+test events never send SMS.
 
 ## Message Receipts
 
-Every attempted outbound SMS creates a durable receipt before provider submission. Receipts preserve the rendered message body, template revision, masked destination, safe render context, provider message ID, provider response metadata, quota remaining, and separate submission/delivery statuses.
+Every attempted outbound SMS creates a durable receipt before provider submission. Receipts preserve
+the rendered message body, template revision, masked destination, safe render context, provider
+message ID, provider response metadata, quota remaining, and separate submission/delivery statuses.
 
 Submission status tracks whether ObservaRR submitted the request to Textbelt:
 
@@ -249,21 +322,44 @@ Delivery status tracks later provider delivery state:
 not_applicable, unknown, sending, sent, delivered, failed
 ```
 
-`submitted` or `sent` does not guarantee handset delivery. A background in-process poller checks recent Textbelt message IDs every 10 minutes and updates delivery status when Textbelt reports progress.
+`submitted` or `sent` does not guarantee handset delivery. A background in-process poller checks
+recent Textbelt message IDs every 10 minutes and updates delivery status when Textbelt reports
+progress.
 
-Receipts never store the Textbelt API key, raw webhook payloads, unmasked phone numbers, email addresses, authorization headers, or provider request bodies. Receipts are linked to the profile phone-number row that was used for dispatch when available.
+Receipts never store the Textbelt API key, raw webhook payloads, unmasked phone numbers, email
+addresses, authorization headers, or provider request bodies. Receipts are linked to the profile
+phone-number row that was used for dispatch when available.
 
 ### Textbelt reply webhooks and SMS opt-in
 
-ObservaRR exposes `POST /webhook/textbelt/reply` for Textbelt SMS replies. Textbelt sends reply JSON with `fromNumber` and `text`; ObservaRR matches the sender to a profile phone number, stores the reply text, and marks the number opted in when the response contains consent language such as `Y`, `Yes`, `OK`, `okay`, `confirmed`, `agree`, `start`, or `subscribe`. Stop/unsubscribe style replies mark the number opted out.
+ObservaRR exposes `POST /webhook/textbelt/reply` for Textbelt SMS replies. Textbelt sends reply JSON
+with `fromNumber` and `text`; ObservaRR matches the sender to a profile phone number, stores the
+reply text, and marks the number opted in when the response contains consent language such as `Y`,
+`Yes`, `OK`, `okay`, `confirmed`, `agree`, `start`, or `subscribe`. Stop/unsubscribe style replies
+mark the number opted out.
 
-Opt-in welcome texts are never sent automatically. An admin must explicitly send the opt-in text for one phone number or all unsent phone numbers on a profile. `WEBHOOK_BASE_URL` must be reachable by Textbelt for reply handling; ObservaRR passes `${WEBHOOK_BASE_URL}/webhook/textbelt/reply` as Textbelt's `replyWebhookUrl` on opt-in welcome messages.
+Opt-in welcome texts are never sent automatically. An admin must explicitly send the opt-in text for
+one phone number or all unsent phone numbers on a profile. The welcome consent message is a global
+editable template, `system:sms_opt_in_welcome`, available from the phone-number section in profile
+management. It supports the catalog variables shown in the template editor, including
+`{profileName}`, `{optInKeyword}`, and `{optOutKeyword}`. `WEBHOOK_BASE_URL` must be reachable by
+Textbelt for reply handling; ObservaRR passes `${WEBHOOK_BASE_URL}/webhook/textbelt/reply` as
+Textbelt's `replyWebhookUrl` on opt-in welcome messages.
 
-Profiles can store multiple phone numbers. Each number has its own enabled flag, opt-in lifecycle, last reply, and linked receipts. Imported profiles remain unsubscribed until an admin adds a phone number and sends an opt-in welcome text.
+Profiles can store multiple phone numbers. Each number has its own enabled flag, opt-in lifecycle,
+last reply, and linked receipts. Imported profiles remain unsubscribed until an admin adds a phone
+number and sends an opt-in welcome text.
 
 ### Media interests
 
-Profiles now have a normalized media-interest table for future subscription management. The default is zero movie or series interests, so media notifications are gated until an enabled profile media interest matches the event's identified media. ObservaRR uses TMDB IDs when available, including Seerr `media.tmdbId`, Radarr/Sonarr payload IDs, and Jellyfin `Provider_tmdb`. Jellyfin `SeriesId` is retained so orphan Season `ItemAdded` events can later be associated with the Series `ItemAdded` event that contains TMDB metadata. SABnzbd events fall back to title/year matching through the existing media timeline identity logic.
+Profiles now have a normalized media-interest table for future subscription management. The default
+is zero movie or series interests, so media notifications are gated until an enabled profile media
+interest matches the event's identified media. ObservaRR uses TMDB IDs when available, including
+Seerr `media.tmdbId`, Radarr/Sonarr payload IDs, and Jellyfin `Provider_tmdb`. Jellyfin `SeriesId`
+is retained so orphan Season `ItemAdded` events can later be associated with the Series `ItemAdded`
+event that contains TMDB metadata. SABnzbd events fall back to title/year matching through the
+existing media timeline identity logic.
+
 ## Jellyfin Profile Import
 
 Jellyfin import is optional and requires these server-only environment variables:
@@ -273,7 +369,9 @@ JELLYFIN_URL=
 JELLYFIN_API_KEY=
 ```
 
-`JELLYFIN_URL` should be the internal Jellyfin base URL reachable from the ObservaRR container, such as `http://192.168.1.50:8096`. `JELLYFIN_API_KEY` is secret, is never returned to the browser, and should be masked in Unraid.
+`JELLYFIN_URL` should be the internal Jellyfin base URL reachable from the ObservaRR container, such
+as `http://192.168.1.50:8096`. `JELLYFIN_API_KEY` is secret, is never returned to the browser, and
+should be masked in Unraid.
 
 Importing Jellyfin users:
 
@@ -282,9 +380,12 @@ Importing Jellyfin users:
 3. Creates or updates local notification profiles idempotently.
 4. Refreshes Jellyfin username and identity sync metadata.
 5. Caches primary avatars under `/data/avatars` when available.
-6. Preserves local phone number, email address, enabled state, Seerr mapping, and all event preferences on repeat import.
+6. Preserves local phone number, email address, enabled state, Seerr mapping, and all event
+   preferences on repeat import.
 
-Avatar files are not exposed as an unrestricted static directory. The browser loads them only through the authenticated `/api/notification-profiles/:id/avatar` endpoint.
+Avatar files are not exposed as an unrestricted static directory. The browser loads them only
+through the authenticated `/api/notification-profiles/:id/avatar` endpoint.
+
 ## SQLite Persistence
 
 The app stores local state in one SQLite database file. By default:
@@ -293,11 +394,20 @@ The app stores local state in one SQLite database file. By default:
 /data/observarr.db
 ```
 
-Override it with `DB_PATH`. In Unraid, `/mnt/user/appdata/observarr` is mounted to `/data`, so the database survives container updates.
+Override it with `DB_PATH`. In Unraid, `/mnt/user/appdata/observarr` is mounted to `/data`, so the
+database survives container updates.
 
-Migrations run automatically on startup and are tracked in `schema_migrations`. Current tables include `users`, `sessions`, `message_receipts`, `notification_profiles`, `profile_external_identities`, `profile_event_preferences`, `event_templates`, `provider_settings`, `webhook_events`, `media_items`, and `media_events`. Legacy placeholder tables `event_templates_legacy` and `message_receipts_legacy` may exist on upgraded databases. Older development tables `tracked_media` and `tracked_media_events` may also exist on upgraded local databases.
+Migrations run automatically on startup and are tracked in `schema_migrations`. Current tables
+include `users`, `sessions`, `message_receipts`, `notification_profiles`,
+`profile_external_identities`, `profile_event_preferences`, `event_templates`, `provider_settings`,
+`webhook_events`, `media_items`, and `media_events`. Legacy placeholder tables
+`event_templates_legacy` and `message_receipts_legacy` may exist on upgraded databases. Older
+development tables `tracked_media` and `tracked_media_events` may also exist on upgraded local
+databases.
 
-To reset the app in local development, stop the server and delete the SQLite file you used for `DB_PATH`. To also remove imported avatar cache, delete the avatar directory. This removes local ObservaRR data, users, profiles, mappings, preferences, and media timelines.
+To reset the app in local development, stop the server and delete the SQLite file you used for
+`DB_PATH`. To also remove imported avatar cache, delete the avatar directory. This removes local
+ObservaRR data, users, profiles, mappings, preferences, and media timelines.
 
 ```powershell
 Remove-Item .data\observarr.db
@@ -314,9 +424,13 @@ The first admin user is bootstrapped only when the `users` table is empty.
 - `ADMIN_PASSWORD` is ignored after any user exists.
 - There is no public registration and no third-party login.
 
-Sessions are random opaque tokens stored in an HttpOnly `observarr_session` cookie. Only a SHA-256 hash of each session token is stored in SQLite. `SESSION_TTL_DAYS` controls expiry and defaults to `7`. Keep `COOKIE_SECURE=false` for local HTTP/LAN use; set it to `true` only behind HTTPS.
+Sessions are random opaque tokens stored in an HttpOnly `observarr_session` cookie. Only a SHA-256
+hash of each session token is stored in SQLite. `SESSION_TTL_DAYS` controls expiry and defaults to
+`7`. Keep `COOKIE_SECURE=false` for local HTTP/LAN use; set it to `true` only behind HTTPS.
 
-Authenticated users can open the profile drawer by clicking their username in the upper-right app bar. The drawer shows local account details and allows changing the password. Password changes require the current password and store a fresh PBKDF2-SHA256 hash.
+Authenticated users can open the profile drawer by clicking their username in the upper-right app
+bar. The drawer shows local account details and allows changing the password. Password changes
+require the current password and store a fresh PBKDF2-SHA256 hash.
 
 ## First Tests
 
@@ -338,7 +452,8 @@ Unauthenticated admin API calls should return `401`:
 curl http://localhost:3020/api/admin/overview
 ```
 
-Log in from the React UI at `http://localhost:3020/`, or use the API and keep the returned cookie in your client.
+Log in from the React UI at `http://localhost:3020/`, or use the API and keep the returned cookie in
+your client.
 
 ```powershell
 curl -Method POST http://localhost:3020/webhook/test `
@@ -392,11 +507,14 @@ Open the admin panel:
 http://localhost:3020/
 ```
 
-The final image runs the Deno server, not the Vite dev server. The Docker build compiles the frontend first, copies `client/dist` into the final Deno image, creates `/data/avatars`, and runs with explicit Deno permissions for env, network, `/app` reads, `/data` reads, and `/data` writes.
+The final image runs the Deno server, not the Vite dev server. The Docker build compiles the
+frontend first, copies `client/dist` into the final Deno image, creates `/data/avatars`, and runs
+with explicit Deno permissions for env, network, `/app` reads, `/data` reads, and `/data` writes.
 
 ## GitHub Actions and GHCR
 
-`.github/workflows/docker-publish.yml` builds the Docker image on pushes to `main`, pull requests, and semver tags like `v0.1.0`.
+`.github/workflows/docker-publish.yml` builds the Docker image on pushes to `main`, pull requests,
+and semver tags like `v0.1.0`.
 
 Pull requests build but do not push images. Pushes to `main` and tags publish to:
 
@@ -430,35 +548,37 @@ To add the custom template repository in Unraid, use:
 https://github.com/sweett00th/observarr
 ```
 
-Keep the app LAN-only. This scaffold does not assume public proxying, Cloudflare, NPM, or any external ingress.
+Keep the app LAN-only. This scaffold does not assume public proxying, Cloudflare, NPM, or any
+external ingress.
 
-Set `ADMIN_PASSWORD` before the first start so the app can create the initial local admin user. After that, changing `ADMIN_USERNAME` or `ADMIN_PASSWORD` in the template will not overwrite existing users.
+Set `ADMIN_PASSWORD` before the first start so the app can create the initial local admin user.
+After that, changing `ADMIN_USERNAME` or `ADMIN_PASSWORD` in the template will not overwrite
+existing users.
 
 ## Environment Variables
 
 Copy `.env.example` for local reference only. In Unraid, set values through the container template.
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `PORT` | No | HTTP port inside the container. Defaults to `3020`. |
-| `TZ` | No | Timezone. Defaults to `America/New_York` in the Unraid template. |
-| `DB_PATH` | No | SQLite database path. Defaults to `/data/observarr.db`. |
-| `ADMIN_USERNAME` | Bootstrap | Initial admin username used only when no users exist. Defaults to `admin`. |
-| `ADMIN_PASSWORD` | Bootstrap | Initial admin password used only when no users exist. No safe default; set in Unraid before first start. |
-| `SESSION_TTL_DAYS` | No | Server-side session lifetime in days. Defaults to `7`. |
-| `COOKIE_SECURE` | No | Adds the Secure cookie flag when `true`. Keep `false` for LAN HTTP. |
-| `EVENT_BUFFER_MINUTES` | No | In-memory Event Console retention window in minutes. Defaults to `10`. |
-| `EVENT_BUFFER_MAX` | No | Maximum in-memory Event Console event count. Defaults to `250`. |
-| `EVENT_RAW_MAX_BYTES` | No | Maximum sanitized raw payload bytes included per in-memory event. Defaults to `20000`. |
-| `WEBHOOK_BASE_URL` | Textbelt replies/dev | Base URL used by dev helpers and Textbelt opt-in replies. Textbelt must be able to reach `${WEBHOOK_BASE_URL}/webhook/textbelt/reply`. |
-| `MOCK_EVENT_INTERVAL_MS` | Dev only | Mock event generator interval. Defaults to `2500`. |
-| `SHARED_SECRET` | Recommended | Optional webhook secret checked against the `x-sms-secret` header. Set this in Unraid. |
-| `NOTIFICATIONS_ENABLED` | No | Defaults to `false`. Must be `true` before any real SMS can be sent. |
-| `TEXTBELT_KEY` | SMS only | Secret Textbelt API key. Required only when SMS notifications are enabled. |
-| `TEXTBELT_SENDER` | No | Optional approved Textbelt sender name. |
-| `JELLYFIN_URL` | Import only | Internal Jellyfin base URL used only by the server for profile import. |
-| `JELLYFIN_API_KEY` | Import only | Secret Jellyfin API key used only by the server for profile import. |
+| Variable                 | Required             | Description                                                                                                                            |
+| ------------------------ | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                   | No                   | HTTP port inside the container. Defaults to `3020`.                                                                                    |
+| `TZ`                     | No                   | Timezone. Defaults to `America/New_York` in the Unraid template.                                                                       |
+| `DB_PATH`                | No                   | SQLite database path. Defaults to `/data/observarr.db`.                                                                                |
+| `ADMIN_USERNAME`         | Bootstrap            | Initial admin username used only when no users exist. Defaults to `admin`.                                                             |
+| `ADMIN_PASSWORD`         | Bootstrap            | Initial admin password used only when no users exist. No safe default; set in Unraid before first start.                               |
+| `SESSION_TTL_DAYS`       | No                   | Server-side session lifetime in days. Defaults to `7`.                                                                                 |
+| `COOKIE_SECURE`          | No                   | Adds the Secure cookie flag when `true`. Keep `false` for LAN HTTP.                                                                    |
+| `EVENT_BUFFER_MINUTES`   | No                   | In-memory Event Console retention window in minutes. Defaults to `10`.                                                                 |
+| `EVENT_BUFFER_MAX`       | No                   | Maximum in-memory Event Console event count. Defaults to `250`.                                                                        |
+| `EVENT_RAW_MAX_BYTES`    | No                   | Maximum sanitized raw payload bytes included per in-memory event. Defaults to `20000`.                                                 |
+| `WEBHOOK_BASE_URL`       | Textbelt replies/dev | Base URL used by dev helpers and Textbelt opt-in replies. Textbelt must be able to reach `${WEBHOOK_BASE_URL}/webhook/textbelt/reply`. |
+| `MOCK_EVENT_INTERVAL_MS` | Dev only             | Mock event generator interval. Defaults to `2500`.                                                                                     |
+| `SHARED_SECRET`          | Recommended          | Optional webhook secret checked against the `x-sms-secret` header. Set this in Unraid.                                                 |
+| `NOTIFICATIONS_ENABLED`  | No                   | Defaults to `false`. Must be `true` before any real SMS can be sent.                                                                   |
+| `TEXTBELT_KEY`           | SMS only             | Secret Textbelt API key. Required only when SMS notifications are enabled.                                                             |
+| `TEXTBELT_SENDER`        | No                   | Optional approved Textbelt sender name.                                                                                                |
+| `JELLYFIN_URL`           | Import only          | Internal Jellyfin base URL used only by the server for profile import.                                                                 |
+| `JELLYFIN_API_KEY`       | Import only          | Secret Jellyfin API key used only by the server for profile import.                                                                    |
 
-Do not commit real secrets. Textbelt keys must never be committed. Twilio is no longer supported. Email templates are stored, but email transport is not implemented.
-
-
+Do not commit real secrets. Textbelt keys must never be committed. Twilio is no longer supported.
+Email templates are stored, but email transport is not implemented.

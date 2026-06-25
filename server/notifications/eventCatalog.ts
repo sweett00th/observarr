@@ -25,8 +25,12 @@ export type NotificationEventGroup = {
 };
 
 const groups = new Map<NotificationEventSource, NotificationEventGroup>();
+const nonPreferenceEvents = new Set(["system:sms_opt_in_welcome"]);
 
 for (const item of templateCatalog) {
+  if (!isNotificationPreferenceEvent(item.source, item.eventType)) {
+    continue;
+  }
   const source = item.source as NotificationEventSource;
   const group = groups.get(source) ?? { source, label: item.sourceLabel, events: [] };
   group.events.push({ eventType: item.eventType, label: item.label });
@@ -36,5 +40,9 @@ for (const item of templateCatalog) {
 export const notificationEventCatalog: NotificationEventGroup[] = [...groups.values()];
 
 export function isKnownNotificationEvent(source: string, eventType: string): boolean {
-  return isCatalogEvent(source, eventType);
+  return isCatalogEvent(source, eventType) && isNotificationPreferenceEvent(source, eventType);
+}
+
+export function isNotificationPreferenceEvent(source: string, eventType: string): boolean {
+  return !nonPreferenceEvents.has(`${source}:${eventType}`);
 }

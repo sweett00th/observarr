@@ -6,6 +6,7 @@ import {
   type TextbeltClient,
   TextbeltConfigurationError,
 } from "../providers/textbeltClient.ts";
+import { getOrCreateEventTemplate } from "./eventTemplates.ts";
 import {
   createPendingReceipt,
   markReceiptRejected,
@@ -13,6 +14,7 @@ import {
   markReceiptSubmitted,
   maskPhoneNumber,
 } from "./receiptService.ts";
+import { renderTemplate } from "./templateRenderer.ts";
 import { ValidationError } from "./profiles.ts";
 
 export type PhoneOptInState = "not_sent" | "pending" | "opted_in" | "opted_out" | "disabled";
@@ -165,8 +167,36 @@ export async function sendWelcomeOptInMessage(
   const profileName = nullableString(
     firstRow(db, "SELECT display_name FROM notification_profiles WHERE id = ?", [profileId])?.[0],
   ) ?? "there";
-  const message =
-    `ObservaRR: Hi ${profileName}. Reply YES to opt in to ObservaRR SMS notifications. Reply STOP to opt out.`;
+  const template = getOrCreateEventTemplate(db, "system", "sms_opt_in_welcome");
+  const now = new Date().toISOString();
+  const renderContext = {
+    appName: "ObservaRR",
+    source: "System",
+    eventType: "sms_opt_in_welcome",
+    eventTitle: "SMS opt-in welcome",
+    eventMessage:
+      "Consent message sent manually before a phone number can receive ObservaRR SMS notifications.",
+    occurredAt: now,
+    profileName,
+    optInKeyword: "YES",
+    optOutKeyword: "STOP",
+  };
+  const rendered = renderTemplate(
+    "system",
+    "sms_opt_in_welcome",
+    template.smsBodyTemplate,
+    renderContext,
+  );
+
+  if (!rendered.ok) {
+    throw new ValidationError(rendered.errors.join(" ") || "Could not render SMS opt-in template");
+  }
+
+  const message = rendered.rendered.trim();
+  if (!message) {
+    throw new ValidationError("SMS opt-in welcome template cannot be blank");
+  }
+
   const receipt = createPendingReceipt(db, {
     eventDedupeKey: `sms-opt-in:${phone.id}:${Date.now()}`,
     eventSource: "system",
@@ -174,10 +204,10 @@ export async function sendWelcomeOptInMessage(
     eventTitle: "SMS opt-in welcome",
     profileId,
     profilePhoneNumberId: phone.id,
-    templateId: null,
-    templateRevision: null,
+    templateId: template.id,
+    templateRevision: template.revision,
     renderedBody: message,
-    renderContext: { profileId, phoneNumberId: phone.id, purpose: "sms_opt_in" },
+    renderContext: { ...renderContext, profileId, phoneNumberId: phone.id, purpose: "sms_opt_in" },
     destinationMasked: maskPhoneNumber(phone.phoneNumber),
   });
 
@@ -201,7 +231,7 @@ export async function sendWelcomeOptInMessage(
         SET welcome_sent_at = COALESCE(welcome_sent_at, ?), updated_at = ?
         WHERE id = ? AND profile_id = ?
       `,
-        [new Date().toISOString(), new Date().toISOString(), phone.id, profileId],
+        [now, new Date().toISOString(), phone.id, profileId],
       );
     } else if (result.kind === "rejected") {
       markReceiptRejected(db, receipt.id, {

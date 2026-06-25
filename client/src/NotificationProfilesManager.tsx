@@ -8,10 +8,7 @@ import NotificationsOffIcon from "@mui/icons-material/NotificationsOff";
 import ImportExportIcon from "@mui/icons-material/ImportExport";
 import PhoneIcon from "@mui/icons-material/Phone";
 import SearchIcon from "@mui/icons-material/Search";
-import {
-  type TemplateCatalogEvent,
-  TemplateEditorDialog,
-} from "./TemplateEditorDialog";
+import { type TemplateCatalogEvent, TemplateEditorDialog } from "./TemplateEditorDialog";
 import {
   Alert,
   Avatar,
@@ -211,8 +208,8 @@ export function NotificationProfilesManager({
     fetchProfile(selectedId);
   }, [selectedId, catalog]);
 
-  const selectedSummary =
-    profiles.find((profile) => profile.id === selectedId) ?? null;
+  const selectedSummary = profiles.find((profile) => profile.id === selectedId) ?? null;
+  const optInTemplateEvent = findCatalogEvent(catalog, "system", "sms_opt_in_welcome");
 
   async function fetchCatalog() {
     const response = await fetch("/api/event-templates/catalog");
@@ -246,9 +243,7 @@ export function NotificationProfilesManager({
     } catch (error) {
       setMessage({
         severity: "error",
-        text: error instanceof Error
-          ? error.message
-          : "Could not load profiles",
+        text: error instanceof Error ? error.message : "Could not load profiles",
       });
     } finally {
       setLoadingList(false);
@@ -295,9 +290,7 @@ export function NotificationProfilesManager({
     } catch (error) {
       setMessage({
         severity: "error",
-        text: error instanceof Error
-          ? error.message
-          : "Could not create profile",
+        text: error instanceof Error ? error.message : "Could not create profile",
       });
     } finally {
       setSaving(false);
@@ -367,14 +360,13 @@ export function NotificationProfilesManager({
                   username: editor.jellyfinUsername,
                 }
                 : null,
-              seerr:
-                editor.seerrUserId || editor.seerrUsername || editor.seerrEmail
-                  ? {
-                    externalUserId: editor.seerrUserId,
-                    username: editor.seerrUsername,
-                    email: editor.seerrEmail,
-                  }
-                  : null,
+              seerr: editor.seerrUserId || editor.seerrUsername || editor.seerrEmail
+                ? {
+                  externalUserId: editor.seerrUserId,
+                  username: editor.seerrUsername,
+                  email: editor.seerrEmail,
+                }
+                : null,
             },
           }),
         },
@@ -416,13 +408,12 @@ export function NotificationProfilesManager({
     }
   }
 
-  const profileInitials =
-    (details?.displayName || selectedSummary?.displayName || "?")
-      .split(" ")
-      .map((part) => part.charAt(0))
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
+  const profileInitials = (details?.displayName || selectedSummary?.displayName || "?")
+    .split(" ")
+    .map((part) => part.charAt(0))
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="xl">
@@ -475,9 +466,7 @@ export function NotificationProfilesManager({
                   {importing ? "Importing" : "Import Jellyfin Users"}
                 </Button>
               </Stack>
-              {message && (
-                <Alert severity={message.severity}>{message.text}</Alert>
-              )}
+              {message && <Alert severity={message.severity}>{message.text}</Alert>}
               <List dense sx={{ maxHeight: 555, overflowY: "auto" }}>
                 {profiles.map((profile) => (
                   <ListItemButton
@@ -567,8 +556,7 @@ export function NotificationProfilesManager({
                         {details.displayName}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        Notification recipient profile. This is not an ObservaRR
-                        login account.
+                        Notification recipient profile. This is not an ObservaRR login account.
                       </Typography>
                     </Box>
                     <FormControlLabel
@@ -586,9 +574,7 @@ export function NotificationProfilesManager({
                     />
                   </Stack>
 
-                  {loadingDetails && (
-                    <Alert severity="info">Loading profile...</Alert>
-                  )}
+                  {loadingDetails && <Alert severity="info">Loading profile...</Alert>}
 
                   <Grid container spacing={2}>
                     <Grid item xs={12} md={6}>
@@ -624,8 +610,7 @@ export function NotificationProfilesManager({
                         receipts={phoneReceipts}
                         onExpandedPhoneId={setExpandedPhoneId}
                         onReceipts={setPhoneReceipts}
-                        onChange={(phoneNumbers) =>
-                          setEditor({ ...editor, phoneNumbers })}
+                        onChange={(phoneNumbers) => setEditor({ ...editor, phoneNumbers })}
                         onChanged={() => fetchProfile(details.id)}
                       />
                     </Grid>
@@ -640,9 +625,9 @@ export function NotificationProfilesManager({
                       color="text.secondary"
                       sx={{ mb: 2 }}
                     >
-                      Jellyfin mappings can be imported and refreshed. Seerr
-                      mappings are manually editable. Mapping a user does not
-                      create a login account or enable notifications.
+                      Jellyfin mappings can be imported and refreshed. Seerr mappings are manually
+                      editable. Mapping a user does not create a login account or enable
+                      notifications.
                     </Typography>
                     <Grid container spacing={2}>
                       <Grid item xs={12} md={6}>
@@ -715,8 +700,7 @@ export function NotificationProfilesManager({
                     {details.mediaInterests.length === 0
                       ? (
                         <Alert severity="info">
-                          This profile is not subscribed to any movies or series
-                          yet.
+                          This profile is not subscribed to any movies or series yet.
                         </Alert>
                       )
                       : (
@@ -730,11 +714,7 @@ export function NotificationProfilesManager({
                               key={interest.id}
                               label={`${interest.title}${
                                 interest.year ? ` (${interest.year})` : ""
-                              }${
-                                interest.mediaType
-                                  ? ` - ${interest.mediaType}`
-                                  : ""
-                              }`}
+                              }${interest.mediaType ? ` - ${interest.mediaType}` : ""}`}
                               color={interest.enabled ? "primary" : "default"}
                               variant={interest.enabled ? "filled" : "outlined"}
                             />
@@ -750,13 +730,15 @@ export function NotificationProfilesManager({
                       phone.enabled && phone.optInState === "opted_in"
                     )) && (
                       <Alert severity="warning" sx={{ mb: 2 }}>
-                        No enabled phone number has confirmed SMS opt-in. Email
-                        templates are stored, but email delivery is not
-                        configured yet.
+                        No enabled phone number has confirmed SMS opt-in. Email templates are
+                        stored, but email delivery is not configured yet.
                       </Alert>
                     )}
                     <Stack spacing={2}>
-                      {catalog.map((group) => (
+                      {catalog.map((group) => ({
+                        ...group,
+                        events: group.events.filter(isPreferenceTemplateEvent),
+                      })).filter((group) => group.events.length > 0).map((group) => (
                         <Box
                           key={group.source}
                           sx={{
@@ -799,9 +781,7 @@ export function NotificationProfilesManager({
                                       label={event.template?.hasSmsTemplate
                                         ? "SMS template"
                                         : "No SMS template"}
-                                      color={event.template?.hasSmsTemplate
-                                        ? "success"
-                                        : "default"}
+                                      color={event.template?.hasSmsTemplate ? "success" : "default"}
                                     />
                                     <Chip
                                       size="small"
@@ -868,8 +848,7 @@ export function NotificationProfilesManager({
                                             setEditor,
                                             key,
                                             {
-                                              notifyEmail:
-                                                change.target.checked,
+                                              notifyEmail: change.target.checked,
                                             },
                                           )}
                                       />
@@ -881,8 +860,7 @@ export function NotificationProfilesManager({
                                   <Button
                                     size="small"
                                     variant="outlined"
-                                    onClick={() =>
-                                      setTemplateEditorEvent(event)}
+                                    onClick={() => setTemplateEditorEvent(event)}
                                   >
                                     Edit Template
                                   </Button>
@@ -898,8 +876,7 @@ export function NotificationProfilesManager({
                   <Stack direction="row" spacing={1} justifyContent="flex-end">
                     <Button
                       variant="outlined"
-                      onClick={() =>
-                        details && setEditor(toEditorState(details, catalog))}
+                      onClick={() => details && setEditor(toEditorState(details, catalog))}
                     >
                       Reset
                     </Button>
@@ -958,9 +935,7 @@ export function NotificationProfilesActions({
       onImported();
     } catch (caughtError) {
       setError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Jellyfin import failed",
+        caughtError instanceof Error ? caughtError.message : "Jellyfin import failed",
       );
     } finally {
       setImporting(false);
@@ -1006,7 +981,7 @@ function toEditorState(
   const preferences: Record<string, ProfilePreference> = {};
 
   for (const group of catalog) {
-    for (const event of group.events) {
+    for (const event of group.events.filter(isPreferenceTemplateEvent)) {
       const key = preferenceKey(group.source, event.eventType);
       preferences[key] = preferenceMap.get(key) ?? {
         source: group.source,
@@ -1084,6 +1059,7 @@ type PhoneNumbersEditorProps = {
   onReceipts: (receipts: Record<number, PhoneReceipt[]>) => void;
   onChange: (phones: EditorState["phoneNumbers"]) => void;
   onChanged: () => void;
+  onEditOptInTemplate?: () => void;
 };
 
 function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
@@ -1096,6 +1072,7 @@ function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
     onReceipts,
     onChange,
     onChanged,
+    onEditOptInTemplate,
   } = props;
   async function sendWelcome(phoneId: number) {
     const response = await fetch(
@@ -1142,9 +1119,7 @@ function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
     patch: Partial<EditorState["phoneNumbers"][number]>,
   ) {
     onChange(
-      phones.map((phone, phoneIndex) =>
-        phoneIndex === index ? { ...phone, ...patch } : phone
-      ),
+      phones.map((phone, phoneIndex) => phoneIndex === index ? { ...phone, ...patch } : phone),
     );
   }
 
@@ -1167,6 +1142,11 @@ function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
           spacing={1}
           justifyContent={{ xs: "flex-start", sm: "flex-end" }}
         >
+          {onEditOptInTemplate && (
+            <Button size="small" variant="outlined" onClick={onEditOptInTemplate}>
+              Edit opt-in template
+            </Button>
+          )}
           <Button size="small" variant="outlined" onClick={sendAllPending}>
             Send pending opt-ins
           </Button>
@@ -1188,8 +1168,7 @@ function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
       </Stack>
       {phones.length === 0 && (
         <Alert severity="info">
-          No phone numbers. Add a number, save the profile, then send its opt-in
-          text.
+          No phone numbers. Add a number, save the profile, then send its opt-in text.
         </Alert>
       )}
       <Stack spacing={1}>
@@ -1224,9 +1203,7 @@ function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
                   size="small"
                   disabled={!phone.id}
                   onClick={() => toggleReceipts(phone.id)}
-                  title={phone.id
-                    ? "Show receipts"
-                    : "Save profile before viewing receipts"}
+                  title={phone.id ? "Show receipts" : "Save profile before viewing receipts"}
                   sx={{ mt: 0.75 }}
                 >
                   {icon}
@@ -1235,8 +1212,7 @@ function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
                   size="small"
                   label="Phone"
                   value={phone.phoneNumber}
-                  onChange={(event) =>
-                    update(index, { phoneNumber: event.target.value })}
+                  onChange={(event) => update(index, { phoneNumber: event.target.value })}
                   placeholder="5555551234"
                   helperText="10-digit U.S. or +country code"
                   fullWidth
@@ -1246,8 +1222,7 @@ function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
                   size="small"
                   label="Label"
                   value={phone.label}
-                  onChange={(event) =>
-                    update(index, { label: event.target.value })}
+                  onChange={(event) => update(index, { label: event.target.value })}
                   placeholder="Mobile"
                   fullWidth
                   sx={{ gridColumn: { xs: "2 / 3", md: "auto" } }}
@@ -1263,8 +1238,7 @@ function PhoneNumbersEditor(props: PhoneNumbersEditorProps) {
                     <Switch
                       size="small"
                       checked={phone.enabled}
-                      onChange={(event) =>
-                        update(index, { enabled: event.target.checked })}
+                      onChange={(event) => update(index, { enabled: event.target.checked })}
                     />
                   }
                   label={phone.enabled ? "Enabled" : "Disabled"}
