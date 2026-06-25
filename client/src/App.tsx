@@ -24,10 +24,19 @@ import {
   Container,
   createTheme,
   CssBaseline,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Drawer,
   FormControlLabel,
   Grid,
   IconButton,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
   Stack,
   TextField,
   ThemeProvider,
@@ -118,6 +127,7 @@ type MediaTimeline = {
   mediaKey: string;
   mediaType: string | null;
   title: string;
+  year: string | null;
   thumbnailUrl: string | null;
   source: string | null;
   status: string;
@@ -743,6 +753,7 @@ function MediaTimelinesPage({
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [deleting, setDeleting] = useState(false);
+  const [subscribeOpen, setSubscribeOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -904,9 +915,21 @@ function MediaTimelinesPage({
             <Stack spacing={3}>
               <Grid container spacing={3}>
                 <Grid item xs={12} md={4}>
-                  <Card variant="outlined" sx={{ height: 560 }}>
-                    <CardContent sx={{ height: "100%" }}>
-                      <Stack spacing={2} sx={{ height: "100%" }}>
+                  <Card
+                    variant="outlined"
+                    sx={{ height: 560, display: "flex", flexDirection: "column" }}
+                  >
+                    <CardContent
+                      sx={{
+                        flex: 1,
+                        minHeight: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        p: 2,
+                        "&:last-child": { pb: 2 },
+                      }}
+                    >
+                      <Stack spacing={2} sx={{ flex: 1, minHeight: 0 }}>
                         <TextField
                           size="small"
                           label="Search media timelines"
@@ -929,6 +952,14 @@ function MediaTimelinesPage({
                           />
                           <Button
                             size="small"
+                            variant="outlined"
+                            disabled={selectedIds.length === 0}
+                            onClick={() => setSubscribeOpen(true)}
+                          >
+                            Subscribe {selectedIds.length || ""}
+                          </Button>
+                          <Button
+                            size="small"
                             color="error"
                             variant="outlined"
                             disabled={selectedIds.length === 0 || deleting}
@@ -937,7 +968,7 @@ function MediaTimelinesPage({
                             Delete {selectedIds.length || ""}
                           </Button>
                         </Stack>
-                        <Stack spacing={1} sx={{ overflowY: "auto", pr: 0.5 }}>
+                        <Stack spacing={1} sx={{ overflowY: "auto", pr: 0.5, flex: 1, minHeight: 0 }}>
                           {filteredItems.map((item) => (
                             <Card
                               key={item.id}
@@ -1003,7 +1034,138 @@ function MediaTimelinesPage({
             </Stack>
           )}
       </Stack>
+      <SubscribeToProfilesDialog
+        open={subscribeOpen}
+        mediaItemIds={selectedIds}
+        onClose={() => setSubscribeOpen(false)}
+        onDone={() => {
+          setSubscribeOpen(false);
+          setSelectedIds([]);
+        }}
+      />
     </Container>
+  );
+}
+
+function SubscribeToProfilesDialog({
+  open,
+  mediaItemIds,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  mediaItemIds: number[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  type ProfileListItem = { id: number; displayName: string; enabled: boolean };
+  const [profiles, setProfiles] = useState<ProfileListItem[]>([]);
+  const [loadingProfiles, setLoadingProfiles] = useState(false);
+  const [selectedProfileIds, setSelectedProfileIds] = useState<number[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setSelectedProfileIds([]);
+      setError(null);
+      return;
+    }
+
+    setLoadingProfiles(true);
+    fetch("/api/notification-profiles")
+      .then((r) => r.json() as Promise<{ ok: boolean; profiles: ProfileListItem[] }>)
+      .then((data) => setProfiles(data.profiles ?? []))
+      .finally(() => setLoadingProfiles(false));
+  }, [open]);
+
+  function toggleProfile(id: number) {
+    setSelectedProfileIds((current) =>
+      current.includes(id) ? current.filter((x) => x !== id) : [...current, id]
+    );
+  }
+
+  async function handleSubmit() {
+    if (selectedProfileIds.length === 0) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/media-timelines/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaItemIds, profileIds: selectedProfileIds }),
+      });
+      if (!response.ok) {
+        const data = await response.json() as { error?: string };
+        throw new Error(data.error ?? "Subscribe failed");
+      }
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Subscribe failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>
+        Subscribe {mediaItemIds.length} item{mediaItemIds.length !== 1 ? "s" : ""} to profile
+        {selectedProfileIds.length > 1 ? "s" : ""}
+      </DialogTitle>
+      <DialogContent dividers sx={{ p: 0 }}>
+        {loadingProfiles
+          ? (
+            <Box sx={{ display: "flex", justifyContent: "center", p: 3 }}>
+              <CircularProgress size={24} />
+            </Box>
+          )
+          : profiles.length === 0
+          ? (
+            <Box sx={{ p: 2 }}>
+              <Alert severity="info">No notification profiles found.</Alert>
+            </Box>
+          )
+          : (
+            <List dense disablePadding>
+              {profiles.map((profile) => (
+                <ListItem key={profile.id} disablePadding>
+                  <ListItemButton onClick={() => toggleProfile(profile.id)}>
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                      <Checkbox
+                        edge="start"
+                        checked={selectedProfileIds.includes(profile.id)}
+                        size="small"
+                        tabIndex={-1}
+                        disableRipple
+                      />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={profile.displayName}
+                      secondary={profile.enabled ? null : "disabled"}
+                    />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
+          )}
+        {error && (
+          <Box sx={{ p: 2 }}>
+            <Alert severity="error">{error}</Alert>
+          </Box>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={submitting}>Cancel</Button>
+        <Button
+          variant="contained"
+          disabled={selectedProfileIds.length === 0 || submitting}
+          onClick={handleSubmit}
+        >
+          {submitting ? "Subscribing…" : `Subscribe to ${selectedProfileIds.length || "…"}`}
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 

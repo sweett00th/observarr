@@ -114,6 +114,21 @@ const movieVariables: TemplateVariable[] = [
   },
 ];
 
+const seasonVariables: TemplateVariable[] = [
+  {
+    name: "seriesTitle",
+    label: "Series title",
+    description: "Series title when available.",
+    example: "Example Series",
+  },
+  {
+    name: "seasonNumber",
+    label: "Season",
+    description: "Season number when available.",
+    example: "2",
+  },
+];
+
 const episodeVariables: TemplateVariable[] = [
   {
     name: "seriesTitle",
@@ -252,11 +267,38 @@ function event(
 }
 
 export const templateCatalog: TemplateCatalogEvent[] = [
-  event("jellyfin", "Jellyfin", "item_added", "Item added", "A Jellyfin library item was added.", [
-    ...jellyfinVariables,
-    ...movieVariables,
-    ...episodeVariables,
-  ]),
+  event(
+    "jellyfin",
+    "Jellyfin",
+    "movie_added",
+    "Movie added",
+    "A Jellyfin movie was added to the library.",
+    [...jellyfinVariables, ...movieVariables],
+  ),
+  event(
+    "jellyfin",
+    "Jellyfin",
+    "season_added",
+    "Season added",
+    "A Jellyfin season was added to the library.",
+    [...jellyfinVariables, ...seasonVariables],
+  ),
+  event(
+    "jellyfin",
+    "Jellyfin",
+    "episode_added",
+    "Episode added",
+    "A Jellyfin episode was added to the library.",
+    [...jellyfinVariables, ...episodeVariables],
+  ),
+  event(
+    "jellyfin",
+    "Jellyfin",
+    "item_added",
+    "Item added",
+    "A Jellyfin library item was added (unknown type).",
+    [...jellyfinVariables, ...movieVariables, ...episodeVariables],
+  ),
   event(
     "jellyfin",
     "Jellyfin",

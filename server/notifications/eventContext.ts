@@ -1,5 +1,5 @@
 import type { LiveEvent } from "../events/eventBus.ts";
-import { mapToCatalogEventType } from "./templateCatalog.ts";
+import { isCatalogEvent, mapToCatalogEventType } from "./templateCatalog.ts";
 import type { NotificationProfile } from "./profiles.ts";
 
 export type CanonicalEventContext = {
@@ -20,12 +20,27 @@ export function buildCanonicalEventContext(
     return null;
   }
 
-  const eventType = mapToCatalogEventType(event.source, event.eventType);
+  const raw = isObject(event.rawPayload) ? event.rawPayload : {};
+
+  let eventType = mapToCatalogEventType(event.source, event.eventType);
   if (!eventType) {
     return null;
   }
 
-  const raw = isObject(event.rawPayload) ? event.rawPayload : {};
+  // Refine Jellyfin item_added to the specific subtype so each can be subscribed independently
+  if (event.source === "jellyfin" && eventType === "item_added") {
+    const itemType = String(raw["ItemType"] ?? raw["itemType"] ?? "").toLowerCase();
+    const refined = itemType === "movie"
+      ? "movie_added"
+      : itemType === "season"
+      ? "season_added"
+      : itemType === "episode"
+      ? "episode_added"
+      : null;
+    if (refined && isCatalogEvent("jellyfin", refined)) {
+      eventType = refined;
+    }
+  }
   const sourceLabel = sourceDisplayName(event.source);
   const mediaTitle = event.entityTitle ||
     pickNestedString(raw, [["movie", "title"], ["series", "title"], ["episode", "title"]]) ||
@@ -39,7 +54,7 @@ export function buildCanonicalEventContext(
     occurredAt: event.timestamp,
     profileName: profile?.displayName,
     mediaTitle,
-    mediaYear: pickString(raw, ["mediaYear", "year", "releaseYear"]) ||
+    mediaYear: pickString(raw, ["mediaYear", "Year", "year", "releaseYear"]) ||
       pickNestedString(raw, [["movie", "year"], ["series", "year"]]),
     quality: pickString(raw, ["quality", "qualityProfile", "qualityVersion"]) ||
       pickNestedString(raw, [["quality", "quality"], ["movieFile", "quality"], [
@@ -52,11 +67,12 @@ export function buildCanonicalEventContext(
     movieTitle: pickNestedString(raw, [["movie", "title"]]) ||
       (event.entityType?.toLowerCase() === "movie" ? mediaTitle : undefined),
     movieYear: pickNestedString(raw, [["movie", "year"]]) || pickString(raw, ["movieYear"]),
-    seriesTitle: pickNestedString(raw, [["series", "title"]]) || pickString(raw, ["seriesTitle"]),
+    seriesTitle: pickNestedString(raw, [["series", "title"]]) ||
+      pickString(raw, ["seriesTitle", "SeriesName"]),
     episodeTitle: pickNestedString(raw, [["episode", "title"]]) ||
       pickString(raw, ["episodeTitle"]),
-    seasonNumber: pickString(raw, ["seasonNumber", "season"]),
-    episodeNumber: pickString(raw, ["episodeNumber", "episode"]),
+    seasonNumber: pickString(raw, ["SeasonNumber", "seasonNumber", "season"]),
+    episodeNumber: pickString(raw, ["EpisodeNumber", "episodeNumber", "episode"]),
     requestStatus: pickString(raw, ["requestStatus", "status"]),
     requesterName: pickString(raw, ["requesterName", "requestedBy", "userDisplayName"]),
     requestedByUsername: pickString(raw, ["requestedByUsername", "username", "userName"]),

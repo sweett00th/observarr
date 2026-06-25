@@ -33,6 +33,66 @@ export type AutoSubscriptionResult = {
   reason?: string;
 };
 
+export function subscribeMediaItemsToProfiles(
+  db: Database,
+  mediaItemIds: number[],
+  profileIds: number[],
+): { created: number; updated: number } {
+  let created = 0;
+  let updated = 0;
+  const now = new Date().toISOString();
+
+  for (const mediaItemId of mediaItemIds) {
+    const mediaRow = firstRow(
+      db,
+      "SELECT media_type, tmdb_id, title, year, jellyfin_series_id FROM media_items WHERE id = ?",
+      [mediaItemId],
+    );
+    if (!mediaRow) continue;
+
+    const mediaType = nullableString(mediaRow[0]);
+    const tmdbId = nullableString(mediaRow[1]);
+    const title = String(mediaRow[2]);
+    const year = nullableString(mediaRow[3]);
+    const jellyfinSeriesId = nullableString(mediaRow[4]);
+
+    for (const profileId of profileIds) {
+      const existing = firstRow(
+        db,
+        "SELECT id FROM profile_media_interests WHERE profile_id = ? AND media_item_id = ? LIMIT 1",
+        [profileId, mediaItemId],
+      );
+
+      if (existing) {
+        db.query(
+          `UPDATE profile_media_interests
+           SET media_type = COALESCE(?, media_type),
+             tmdb_id = COALESCE(?, tmdb_id),
+             title = CASE WHEN trim(?) <> '' THEN ? ELSE title END,
+             year = COALESCE(?, year),
+             jellyfin_series_id = COALESCE(?, jellyfin_series_id),
+             enabled = 1,
+             updated_at = ?
+           WHERE id = ?`,
+          [mediaType, tmdbId, title, title, year, jellyfinSeriesId, now, Number(existing[0])],
+        );
+        updated++;
+      } else {
+        db.query(
+          `INSERT INTO profile_media_interests (
+            profile_id, media_item_id, media_type, tmdb_id, title, year,
+            jellyfin_series_id, enabled, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+          [profileId, mediaItemId, mediaType, tmdbId, title, year, jellyfinSeriesId, now, now],
+        );
+        created++;
+      }
+    }
+  }
+
+  return { created, updated };
+}
+
 export function listProfileMediaInterests(db: Database, profileId: number): ProfileMediaInterest[] {
   return [...db.query(
     `

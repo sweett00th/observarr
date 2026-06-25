@@ -1,5 +1,6 @@
 import { Hono } from "@hono/hono";
 import type { Database } from "../db/index.ts";
+import { subscribeMediaItemsToProfiles } from "../notifications/mediaInterests.ts";
 import {
   getMediaTimeline,
   getMediaTimelineByLiveEventId,
@@ -60,6 +61,33 @@ export function createMediaTimelineRoutes(db: Database): Hono {
       ok: true,
       deleted: [...new Set(ids)].length,
     });
+  });
+
+  media.post("/subscribe", async (c) => {
+    let payload: { mediaItemIds?: unknown; profileIds?: unknown };
+    try {
+      payload = await c.req.json();
+    } catch {
+      return c.json({ ok: false, status: "bad_request", error: "Expected JSON body" }, 400);
+    }
+
+    const mediaItemIds = Array.isArray(payload.mediaItemIds)
+      ? payload.mediaItemIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+    const profileIds = Array.isArray(payload.profileIds)
+      ? payload.profileIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+
+    if (mediaItemIds.length === 0 || profileIds.length === 0) {
+      return c.json({
+        ok: false,
+        status: "bad_request",
+        error: "mediaItemIds and profileIds are required",
+      }, 400);
+    }
+
+    const result = subscribeMediaItemsToProfiles(db, mediaItemIds, profileIds);
+    return c.json({ ok: true, ...result });
   });
 
   media.post("/from-event", async (c) => {
