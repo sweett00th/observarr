@@ -1,8 +1,8 @@
-# observarr
+# ObservaRR
 
-Internal Unraid Docker app for receiving home server webhooks and, later, sending SMS notifications. The app runs a Deno/Hono backend, a Vite React admin panel, local SQLite persistence, local username/password auth, Docker packaging, GHCR publishing, and an Unraid template.
+Internal Unraid Docker app for receiving home server webhooks, managing future notification recipient profiles, and later sending notifications. The app runs a Deno/Hono backend, a Vite React admin panel, local SQLite persistence, local username/password auth, Docker packaging, GHCR publishing, and an Unraid template.
 
-No Twilio sending is implemented yet.
+No SMS or email delivery provider is implemented yet.
 
 ## Architecture
 
@@ -12,6 +12,7 @@ No Twilio sending is implemented yet.
 - Auth: local username/password with server-side SQLite sessions
 - Live events: ephemeral in-memory Event Console streamed with Server-Sent Events
 - Media timelines: identified media events persisted for audit and gap analysis
+- Notification profiles: local recipient profiles with contacts, external mappings, preferences, and Jellyfin avatar imports
 - Production: one Docker container
 - Image: `ghcr.io/sweett00th/observarr`
 - Unraid template: `templates/observarr.xml`
@@ -91,6 +92,15 @@ npm --prefix client run typecheck
 - `DELETE /api/media-timelines` deletes selected media timelines by id. It requires login.
 - `POST /api/media-timelines/from-event` resolves the media timeline for a live event. It requires login.
 - `GET /api/media-timelines/:id` returns a media timeline. It requires login.
+- `GET /api/notification-profiles/event-catalog` returns the stable notification event catalog. It requires login.
+- `GET /api/notification-profiles?query=` searches notification recipient profiles. It requires login.
+- `POST /api/notification-profiles` creates a manual notification recipient profile. It requires login.
+- `GET /api/notification-profiles/:id` returns profile details, identities, and saved preferences. It requires login.
+- `PATCH /api/notification-profiles/:id` updates profile identity, contacts, enabled state, and external mappings. It requires login.
+- `PUT /api/notification-profiles/:id/preferences` replaces the saved event preference set. It requires login.
+- `GET /api/notification-profiles/:id/avatar` streams a cached imported avatar. It requires login.
+- `GET /api/integrations/jellyfin/status` returns safe Jellyfin configuration status. It requires login.
+- `POST /api/integrations/jellyfin/import-users` imports Jellyfin users into notification profiles. It requires login.
 - `POST /webhook/test` accepts JSON, logs a summary, emits a live test event, and returns the summary. It does not send SMS.
 - `POST /webhook/jellyfin`, `/webhook/seerr`, `/webhook/radarr`, `/webhook/sonarr`, and `/webhook/sabnzbd` accept JSON and emit normalized live events. They do not send SMS.
 
@@ -170,6 +180,43 @@ WEBHOOK_BASE_URL=http://localhost:3020
 MOCK_EVENT_INTERVAL_MS=2500
 ```
 
+## Notification Profiles
+
+The authenticated dashboard includes a Notification Profiles management dialog. These profiles represent future notification recipients and are separate from local ObservaRR admin login users.
+
+Profiles store:
+
+- Display name and enabled/disabled state
+- Optional phone number and email address
+- Optional Jellyfin and Seerr identity mappings
+- Imported Jellyfin avatar metadata
+- Event-specific interest, future SMS preference, and future email preference
+
+Saving profile preferences does not send messages. Imported Jellyfin users are not automatically subscribed to any notification event or delivery channel.
+
+The stable event catalog is served by the backend at `/api/notification-profiles/event-catalog` so the API and UI use the same source and event type values.
+
+## Jellyfin Profile Import
+
+Jellyfin import is optional and requires these server-only environment variables:
+
+```env
+JELLYFIN_URL=
+JELLYFIN_API_KEY=
+```
+
+`JELLYFIN_URL` should be the internal Jellyfin base URL reachable from the ObservaRR container, such as `http://192.168.1.50:8096`. `JELLYFIN_API_KEY` is secret, is never returned to the browser, and should be masked in Unraid.
+
+Importing Jellyfin users:
+
+1. Fetches Jellyfin users from the server side.
+2. Uses Jellyfin user ID as the stable external identity key.
+3. Creates or updates local notification profiles idempotently.
+4. Refreshes Jellyfin username and identity sync metadata.
+5. Caches primary avatars under `/data/avatars` when available.
+6. Preserves local phone number, email address, enabled state, Seerr mapping, and all event preferences on repeat import.
+
+Avatar files are not exposed as an unrestricted static directory. The browser loads them only through the authenticated `/api/notification-profiles/:id/avatar` endpoint.
 ## SQLite Persistence
 
 The app stores local state in one SQLite database file. By default:
@@ -180,12 +227,13 @@ The app stores local state in one SQLite database file. By default:
 
 Override it with `DB_PATH`. In Unraid, `/mnt/user/appdata/observarr` is mounted to `/data`, so the database survives container updates.
 
-Migrations run automatically on startup and are tracked in `schema_migrations`. Current tables include `users`, `sessions`, `message_receipts`, `notification_profiles`, `event_templates`, `provider_settings`, `webhook_events`, `media_items`, and `media_events`. Older development tables `tracked_media` and `tracked_media_events` may also exist on upgraded local databases.
+Migrations run automatically on startup and are tracked in `schema_migrations`. Current tables include `users`, `sessions`, `message_receipts`, `notification_profiles`, `profile_external_identities`, `profile_event_preferences`, `event_templates`, `provider_settings`, `webhook_events`, `media_items`, and `media_events`. Older development tables `tracked_media` and `tracked_media_events` may also exist on upgraded local databases.
 
-To reset the app in local development, stop the server and delete the SQLite file you used for `DB_PATH`, for example:
+To reset the app in local development, stop the server and delete the SQLite file you used for `DB_PATH`. To also remove imported avatar cache, delete the avatar directory. This removes local ObservaRR data, users, profiles, mappings, preferences, and media timelines.
 
 ```powershell
 Remove-Item .data\observarr.db
+Remove-Item -Recurse .data\avatars
 ```
 
 ## Local Auth
@@ -198,7 +246,7 @@ The first admin user is bootstrapped only when the `users` table is empty.
 - `ADMIN_PASSWORD` is ignored after any user exists.
 - There is no public registration and no third-party login.
 
-Sessions are random opaque tokens stored in an HttpOnly `sms_gateway_session` cookie. Only a SHA-256 hash of each session token is stored in SQLite. `SESSION_TTL_DAYS` controls expiry and defaults to `7`. Keep `COOKIE_SECURE=false` for local HTTP/LAN use; set it to `true` only behind HTTPS.
+Sessions are random opaque tokens stored in an HttpOnly `observarr_session` cookie. Only a SHA-256 hash of each session token is stored in SQLite. `SESSION_TTL_DAYS` controls expiry and defaults to `7`. Keep `COOKIE_SECURE=false` for local HTTP/LAN use; set it to `true` only behind HTTPS.
 
 Authenticated users can open the profile drawer by clicking their username in the upper-right app bar. The drawer shows local account details and allows changing the password. Password changes require the current password and store a fresh PBKDF2-SHA256 hash.
 
@@ -261,6 +309,8 @@ docker run --rm -p 3020:3020 `
   -e COOKIE_SECURE=false `
   -e EVENT_BUFFER_MINUTES=10 `
   -e EVENT_BUFFER_MAX=250 `
+  -e JELLYFIN_URL=http://jellyfin.local:8096 `
+  -e JELLYFIN_API_KEY=replace-with-unraid-secret `
   -v ${PWD}\.data:/data `
   observarr
 ```
@@ -271,7 +321,7 @@ Open the admin panel:
 http://localhost:3020/
 ```
 
-The final image runs the Deno server, not the Vite dev server. The Docker build compiles the frontend first, copies `client/dist` into the final Deno image, creates `/data`, and runs with explicit Deno permissions for env, network, `/app` reads, `/data` reads, and `/data` writes.
+The final image runs the Deno server, not the Vite dev server. The Docker build compiles the frontend first, copies `client/dist` into the final Deno image, creates `/data/avatars`, and runs with explicit Deno permissions for env, network, `/app` reads, `/data` reads, and `/data` writes.
 
 ## GitHub Actions and GHCR
 
@@ -332,9 +382,11 @@ Copy `.env.example` for local reference only. In Unraid, set values through the 
 | `WEBHOOK_BASE_URL` | Dev only | Mock event generator target URL. Defaults to `http://localhost:$PORT`. |
 | `MOCK_EVENT_INTERVAL_MS` | Dev only | Mock event generator interval. Defaults to `2500`. |
 | `SHARED_SECRET` | Recommended | Optional webhook secret checked against the `x-sms-secret` header. Set this in Unraid. |
+| `JELLYFIN_URL` | Import only | Internal Jellyfin base URL used only by the server for profile import. |
+| `JELLYFIN_API_KEY` | Import only | Secret Jellyfin API key used only by the server for profile import. |
 | `TWILIO_ACCOUNT_SID` | Future | Placeholder for Twilio configuration. Used only to report whether provider settings appear configured. |
 | `TWILIO_AUTH_TOKEN` | Future | Placeholder for Twilio configuration. No SMS is sent. |
 | `TWILIO_FROM` | Future | Placeholder sender phone number. No SMS is sent. |
 | `SMS_TO` | Future | Placeholder recipient phone number. No SMS is sent. |
 
-Do not commit real secrets.
+Do not commit real secrets. Profile contacts and preferences are stored now for future Textbelt/SMS and email work; no provider delivery is implemented yet.

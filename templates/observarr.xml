@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/sweett00th/observarr/issues</Support>
   <Project>https://github.com/sweett00th/observarr</Project>
-  <Overview>Internal LAN-only observability app for home server media automation webhooks from Jellyseerr/Seerr, Jellyfin, Radarr, Sonarr, and SABnzbd. The container runs a Deno/Hono API and serves the React admin panel. SMS provider delivery is not implemented yet.</Overview>
+  <Overview>Internal LAN-only ObservaRR observability app for home server media automation webhooks from Jellyseerr/Seerr, Jellyfin, Radarr, Sonarr, and SABnzbd. The container runs a Deno/Hono API and serves the React admin panel. SMS provider delivery is not implemented yet.</Overview>
   <Category>Tools:</Category>
   <TemplateURL>https://raw.githubusercontent.com/sweett00th/observarr/main/templates/observarr.xml</TemplateURL>
   <WebUI>http://[IP]:[PORT:3020]/</WebUI>
@@ -22,8 +22,8 @@
   <DonateText/>
   <DonateLink/>
   <Requires/>
-  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/observarr" Mode="rw" Description="Persistent SQLite database directory." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/observarr</Config>
-  <Config Name="Web UI Port" Target="3020" Default="3020" Mode="tcp" Description="HTTP port for Observarr." Type="Port" Display="always" Required="true" Mask="false">3020</Config>
+  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/observarr" Mode="rw" Description="Persistent SQLite database and avatar cache directory." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/observarr</Config>
+  <Config Name="Web UI Port" Target="3020" Default="3020" Mode="tcp" Description="HTTP port for ObservaRR." Type="Port" Display="always" Required="true" Mask="false">3020</Config>
   <Config Name="TZ" Target="TZ" Default="America/New_York" Mode="" Description="Container timezone." Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
   <Config Name="DB_PATH" Target="DB_PATH" Default="/data/observarr.db" Mode="" Description="SQLite database file path inside the container." Type="Variable" Display="always" Required="true" Mask="false">/data/observarr.db</Config>
   <Config Name="ADMIN_USERNAME" Target="ADMIN_USERNAME" Default="admin" Mode="" Description="Initial admin username used only when no users exist." Type="Variable" Display="always" Required="false" Mask="false">admin</Config>
@@ -34,6 +34,8 @@
   <Config Name="EVENT_BUFFER_MAX" Target="EVENT_BUFFER_MAX" Default="250" Mode="" Description="Maximum in-memory Event Console events retained for this container runtime." Type="Variable" Display="always" Required="false" Mask="false">250</Config>
   <Config Name="EVENT_RAW_MAX_BYTES" Target="EVENT_RAW_MAX_BYTES" Default="20000" Mode="" Description="Maximum sanitized raw webhook payload bytes included in each in-memory Event Console event." Type="Variable" Display="always" Required="false" Mask="false">20000</Config>
   <Config Name="SHARED_SECRET" Target="SHARED_SECRET" Default="" Mode="" Description="Optional webhook shared secret. When set, webhook requests must include the x-sms-secret header." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="JELLYFIN_URL" Target="JELLYFIN_URL" Default="" Mode="" Description="Internal Jellyfin base URL used only by the server for profile import, for example http://192.168.1.50:8096." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="JELLYFIN_API_KEY" Target="JELLYFIN_API_KEY" Default="" Mode="" Description="Jellyfin API key used only by the server for profile import. Imported users are not automatically subscribed to notifications." Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="TWILIO_ACCOUNT_SID" Target="TWILIO_ACCOUNT_SID" Default="" Mode="" Description="Future Twilio account SID placeholder. Not used by the scaffold yet." Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="TWILIO_AUTH_TOKEN" Target="TWILIO_AUTH_TOKEN" Default="" Mode="" Description="Future Twilio auth token placeholder. Not used by the scaffold yet." Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="TWILIO_FROM" Target="TWILIO_FROM" Default="" Mode="" Description="Future Twilio sender phone number placeholder." Type="Variable" Display="always" Required="false" Mask="false"/>

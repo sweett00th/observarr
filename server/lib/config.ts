@@ -21,6 +21,10 @@ export function getDbPath(): string {
   return getEnv("DB_PATH") || "/data/observarr.db";
 }
 
+export function getAvatarDirectory(): string {
+  return getEnv("AVATAR_DIR") || "/data/avatars";
+}
+
 export function getAdminUsername(): string {
   return getEnv("ADMIN_USERNAME") || "admin";
 }
@@ -99,4 +103,17 @@ export function isProviderConfigured(): boolean {
 
 export function getSharedSecret(): string | undefined {
   return getEnv("SHARED_SECRET");
+}
+
+export function getJellyfinUrl(): string | undefined {
+  const value = getEnv("JELLYFIN_URL");
+  return value ? value.replace(/\/+$/, "") : undefined;
+}
+
+export function getJellyfinApiKey(): string | undefined {
+  return getEnv("JELLYFIN_API_KEY");
+}
+
+export function isJellyfinConfigured(): boolean {
+  return Boolean(getJellyfinUrl() && getJellyfinApiKey());
 }

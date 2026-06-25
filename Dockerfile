@@ -18,7 +18,7 @@ RUN deno cache server/main.ts
 
 COPY --from=client-build /app/client/dist ./client/dist
 
-RUN mkdir -p /data \
+RUN mkdir -p /data/avatars \
   && chown -R 99:100 /data \
   && chmod -R 775 /data \
   && chmod -R a+rX /app

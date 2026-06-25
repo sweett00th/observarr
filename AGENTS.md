@@ -1,6 +1,6 @@
-# Observarr Agent Notes
+# ObservaRR Agent Notes
 
-This repo is a custom internal Unraid Docker app named `observarr`.
+This repo is a custom internal Unraid Docker app named `observarr`. The user-facing product name is `ObservaRR`.
 
 The intended flow is:
 
@@ -26,10 +26,13 @@ Current durable architecture decisions:
 - The Event Console live buffer is intentionally ephemeral and in-memory only.
 - Media Timelines persist every identifiable media webhook event to SQLite in `media_items` and `media_events`.
 - Media timeline cleanup runs on startup and daily. `MEDIA_AVAILABLE` marks lifecycle completion and schedules cleanup 14 days later.
-- External services push live events into Observarr through webhook endpoints or scripts. Do not poll Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, or other app APIs for the Event Console unless explicitly requested.
+- External services push live events into ObservaRR through webhook endpoints or scripts. Do not poll Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, or other app APIs for the Event Console unless explicitly requested.
 - `tools/mock-events.ts` is a local development helper that posts synthetic events into webhook endpoints. Keep it dev-only; it is not production polling or event ingestion logic.
 - Internal port defaults to `3020`.
 - Keep the app LAN-only. Do not assume public proxying, Cloudflare, or NPM.
 - Secrets must be configured through environment variables in Unraid and must not be committed.
 - Twilio variables are placeholders only. Do not implement Twilio sending until requested.
+- Jellyfin import uses server-only `JELLYFIN_URL` and `JELLYFIN_API_KEY`; never return or log the API key.
+- Notification profiles are future recipients, not ObservaRR login users, and imported people must not be automatically opted into notifications.
+- Imported Jellyfin avatars are cached under `/data/avatars` and served only through authenticated profile avatar routes.
 - Webhook routes may use the optional `SHARED_SECRET` header check via `x-sms-secret`.

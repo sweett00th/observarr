@@ -121,7 +121,7 @@ export function cleanupExpiredMediaTimelines(db: Database): number {
   return expiredIds.length;
 }
 
-export function startMediaTimelineCleanupJob(db: Database): number {
+export function startMediaTimelineCleanupJob(db: Database): ReturnType<typeof setInterval> {
   return setInterval(() => {
     const deleted = cleanupExpiredMediaTimelines(db);
 

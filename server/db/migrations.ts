@@ -208,6 +208,72 @@ const migrations: Migration[] = [
       ALTER TABLE media_items ADD COLUMN thumbnail_url TEXT;
     `,
   },
+  {
+    version: 5,
+    name: "recipient_notification_profiles",
+    sql: `
+      ALTER TABLE notification_profiles RENAME TO notification_profiles_legacy;
+
+      CREATE TABLE notification_profiles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        display_name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        phone_number TEXT,
+        email_address TEXT,
+        avatar_filename TEXT,
+        avatar_content_type TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO notification_profiles (
+        id, display_name, enabled, created_at, updated_at
+      )
+      SELECT id, name, enabled, created_at, updated_at
+      FROM notification_profiles_legacy;
+
+      DROP TABLE notification_profiles_legacy;
+
+      CREATE TABLE profile_external_identities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL,
+        provider TEXT NOT NULL CHECK (provider IN ('jellyfin', 'seerr')),
+        external_user_id TEXT NOT NULL,
+        username TEXT,
+        email TEXT,
+        last_synced_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES notification_profiles(id) ON DELETE CASCADE,
+        UNIQUE(provider, external_user_id),
+        UNIQUE(profile_id, provider)
+      );
+
+      CREATE INDEX profile_external_identities_profile_id_idx
+        ON profile_external_identities(profile_id);
+      CREATE INDEX profile_external_identities_provider_username_idx
+        ON profile_external_identities(provider, username);
+
+      CREATE TABLE profile_event_preferences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        notify_sms INTEGER NOT NULL DEFAULT 0,
+        notify_email INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES notification_profiles(id) ON DELETE CASCADE,
+        UNIQUE(profile_id, source, event_type)
+      );
+
+      CREATE INDEX profile_event_preferences_lookup_idx
+        ON profile_event_preferences(source, event_type, enabled, notify_sms, notify_email);
+      CREATE INDEX profile_event_preferences_profile_id_idx
+        ON profile_event_preferences(profile_id);
+    `,
+  },
 ];
 
 export function runMigrations(db: DB): void {

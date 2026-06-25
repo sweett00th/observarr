@@ -6,6 +6,7 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import SmsIcon from "@mui/icons-material/Sms";
 import StorageIcon from "@mui/icons-material/Storage";
 import TuneIcon from "@mui/icons-material/Tune";
+import { NotificationProfilesActions, NotificationProfilesManager } from "./NotificationProfilesManager";
 import {
   Alert,
   AppBar,
@@ -155,6 +156,8 @@ function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [page, setPage] = useState<"dashboard" | "media-timelines">("dashboard");
   const [selectedMediaTimelineId, setSelectedMediaTimelineId] = useState<number | null>(null);
+  const [notificationProfilesOpen, setNotificationProfilesOpen] = useState(false);
+  const [overviewRefreshKey, setOverviewRefreshKey] = useState(0);
 
   useEffect(() => {
     fetchVersion();
@@ -197,7 +200,7 @@ function App() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [user]);
+  }, [user, overviewRefreshKey]);
 
   function fetchVersion() {
     fetch("/api/version")
@@ -287,7 +290,7 @@ function App() {
         <AppBar position="static" elevation={0}>
           <Toolbar>
             <Typography variant="h6" component="h1" sx={{ fontWeight: 700, flexGrow: 1 }}>
-              Observarr
+              ObservaRR
             </Typography>
             {user && (
               <Stack direction="row" spacing={1} alignItems="center">
@@ -320,6 +323,8 @@ function App() {
             status={backendStatus}
             overview={overview}
             onOpenMediaTimeline={openMediaTimeline}
+            onManageNotificationProfiles={() => setNotificationProfilesOpen(true)}
+            onNotificationProfilesChanged={() => setOverviewRefreshKey((value) => value + 1)}
           />
         ) : (
           <LoginScreen
@@ -334,6 +339,14 @@ function App() {
             user={user}
             open={profileOpen}
             onClose={() => setProfileOpen(false)}
+          />
+        )}
+        {user && (
+          <NotificationProfilesManager
+            open={notificationProfilesOpen}
+            profileCount={overview?.counts.profiles ?? 0}
+            onClose={() => setNotificationProfilesOpen(false)}
+            onChanged={() => setOverviewRefreshKey((value) => value + 1)}
           />
         )}
         {user && <EventConsole onOpenMediaTimeline={openMediaTimeline} />}
@@ -533,11 +546,15 @@ function Dashboard({
   status,
   overview,
   onOpenMediaTimeline,
+  onManageNotificationProfiles,
+  onNotificationProfilesChanged,
 }: {
   version: VersionResponse | null;
   status: "loading" | "online" | "error";
   overview: OverviewResponse | null;
   onOpenMediaTimeline: (id: number | null) => void;
+  onManageNotificationProfiles: () => void;
+  onNotificationProfilesChanged: () => void;
 }) {
   const placeholders = [
     {
@@ -555,6 +572,7 @@ function Dashboard({
       title: "Notification Profiles",
       body: `${overview?.counts.profiles ?? 0} profiles configured.`,
       icon: <TuneIcon />,
+      profileActions: true,
     },
     {
       title: "Event Templates",
@@ -632,9 +650,17 @@ function Dashboard({
                     <Typography variant="h6" component="h2">
                       {item.title}
                     </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {item.body}
-                  </Typography>
+                  {"profileActions" in item && item.profileActions ? (
+                    <NotificationProfilesActions
+                      count={overview?.counts.profiles ?? 0}
+                      onManage={onManageNotificationProfiles}
+                      onImported={onNotificationProfilesChanged}
+                    />
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      {item.body}
+                    </Typography>
+                  )}
                   {"action" in item && item.action && (
                     <Button size="small" variant="outlined" onClick={item.action}>
                       Open
