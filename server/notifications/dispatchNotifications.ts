@@ -113,10 +113,11 @@ export async function dispatchNotificationsForEvent(
   const profiles = listEligibleSmsProfiles(db, canonical.source, canonical.eventType)
     .filter((profile) => !mediaTarget || profileHasMediaInterest(db, profile.id, mediaTarget));
 
-  // Scopes dedupe to a single movie, or a single season of a series, regardless of which event
-  // type (grab/import/request/available/...) is driving the send. Null when the event has no
-  // resolved media (health checks, auth failures, opt-in welcome texts, etc.) — those aren't
-  // "about a movie" so the one-SMS-per-media rule doesn't apply to them.
+  // Identifies a single movie, or a single season of a series, for dedupe purposes. Combined with
+  // canonical.eventType below, this caps each (event type, movie/season) pair at one SMS per
+  // recipient — grab/import/request_available/etc. can each still text once, but never repeat.
+  // Null when the event has no resolved media (health checks, auth failures, opt-in welcome
+  // texts, etc.) — those aren't "about a movie" so the rule doesn't apply to them.
   const mediaScopeKey = buildMediaScopeKey(
     options.mediaItemId,
     canonical.templateContext.seasonNumber,
@@ -174,11 +175,14 @@ export async function dispatchNotificationsForEvent(
       continue;
     }
 
-    if (mediaScopeKey && hasMediaScopeNotification(db, profile.id, mediaScopeKey)) {
+    if (
+      mediaScopeKey &&
+      hasMediaScopeNotification(db, profile.id, mediaScopeKey, canonical.eventType)
+    ) {
       markReceiptSkipped(
         db,
         receipt.id,
-        "Recipient already received an SMS about this movie/season.",
+        `Recipient already received a "${canonical.eventType}" SMS about this movie/season.`,
       );
       summary.skipped += 1;
       logNotification("info", "notifications.dispatch.receipt_skipped", {
@@ -404,10 +408,12 @@ function getSmsEligibilitySummary(
 }
 
 /**
- * Builds the key used to dedupe SMS sends per recipient: one key per movie, or per season of a
- * series when a season number is known (so Season 2 can still notify after Season 1 already has).
- * Episode-level events fold into their season's key on purpose — a recipient who was already
- * texted about a season shouldn't get a second text per episode within it.
+ * Builds the media half of the dedupe key: one key per movie, or per season of a series when a
+ * season number is known (so Season 2 can still notify after Season 1 already has). Episode-level
+ * events fold into their season's key on purpose — within one event type (e.g. `episode_added`), a
+ * recipient who was already texted about a season shouldn't get a second text per episode in it.
+ * The event type itself is applied separately (see hasMediaScopeNotification's eventType param),
+ * so different event types about the same movie/season each still get their own one-time send.
  */
 function buildMediaScopeKey(
   mediaItemId: number | null | undefined,

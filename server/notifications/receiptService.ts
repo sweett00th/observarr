@@ -109,24 +109,25 @@ export function createPendingReceipt(db: Database, input: {
 
 /**
  * True when this profile already has a receipt that actually went out (or may have gone out) for
- * the same media scope (a specific movie, or a specific season of a series). Used to enforce
- * "never send a second SMS to the same recipient about the same movie/season" regardless of which
- * event type (grab/import/request/available/...) triggers the send.
+ * the same event type about the same media scope (a specific movie, or a specific season of a
+ * series). Used to enforce "one SMS per recipient per event type per movie/season" — e.g. `grab`
+ * and `request_available` about the same movie can each still send once, but neither repeats.
  */
 export function hasMediaScopeNotification(
   db: Database,
   profileId: number,
   mediaScopeKey: string,
+  eventType: string,
 ): boolean {
   const row = firstRow(
     db,
     `
     SELECT 1 FROM message_receipts
-    WHERE profile_id = ? AND media_scope_key = ? AND channel = 'sms'
+    WHERE profile_id = ? AND media_scope_key = ? AND event_type = ? AND channel = 'sms'
       AND submission_status IN ('submitted', 'submission_unknown')
     LIMIT 1
   `,
-    [profileId, mediaScopeKey],
+    [profileId, mediaScopeKey, eventType],
   );
   return row !== null;
 }

@@ -304,13 +304,15 @@ Textbelt is the only SMS provider. Real SMS requires all of these:
 Imported Jellyfin profiles are not automatically opted into SMS. `/webhook/test` and Event Console
 test events never send SMS.
 
-Even when every rule above is satisfied, a recipient never gets more than one SMS about the same
-movie, or the same season of a series, no matter how many different event types (grab, import,
-request pending/approved/available, Jellyfin added, ...) fire for it over that title's lifecycle.
-The first successful send for a given profile + movie (or profile + season) permanently closes the
-door on any later one for that same profile and title; the receipt for every later attempt is
-recorded with submission status `skipped`. This is separate from — and layered in front of — the
-existing exact-duplicate-event protection described below.
+Even when every rule above is satisfied, a recipient never gets more than one SMS for the same event
+type about the same movie, or the same season of a series — e.g. a second `grab` (or `episode_added`
+within an already-notified season) never re-sends, even if the upstream event's own ID differs from
+the first one. Different event types about the same title are unaffected and each still send their
+own one-time SMS when subscribed (a `request_available` text still goes out even if that recipient
+already got a `grab` text for the same movie). The receipt for a suppressed repeat is recorded with
+submission status `skipped` rather than silently dropped. This is separate from — and layered in
+front of — the existing exact-duplicate-event protection described below, which only catches literal
+redelivery of one specific event.
 
 ## Message Receipts
 
