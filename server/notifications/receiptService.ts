@@ -67,6 +67,7 @@ export function createPendingReceipt(db: Database, input: {
   renderedBody: string | null;
   renderContext: Record<string, string> | Record<string, unknown>;
   destinationMasked: string;
+  mediaScopeKey?: string | null;
 }): MessageReceipt | null {
   const now = new Date().toISOString();
   try {
@@ -75,10 +76,10 @@ export function createPendingReceipt(db: Database, input: {
       INSERT INTO message_receipts (
         event_dedupe_key, event_source, event_type, event_title, profile_id,
         profile_phone_number_id, channel, provider, template_id, template_revision, rendered_body,
-        render_context_json, destination_masked, submission_status, delivery_status,
+        render_context_json, destination_masked, media_scope_key, submission_status, delivery_status,
         attempted_at, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, 'sms', 'textbelt', ?, ?, ?, ?, ?, 'pending', 'unknown', ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, 'sms', 'textbelt', ?, ?, ?, ?, ?, ?, 'pending', 'unknown', ?, ?, ?)
     `,
       [
         input.eventDedupeKey,
@@ -92,6 +93,7 @@ export function createPendingReceipt(db: Database, input: {
         input.renderedBody,
         JSON.stringify(sanitizeMetadata(input.renderContext)),
         input.destinationMasked,
+        input.mediaScopeKey ?? null,
         now,
         now,
         now,
@@ -103,6 +105,38 @@ export function createPendingReceipt(db: Database, input: {
   }
   const id = Number(firstRow(db, "SELECT last_insert_rowid()")?.[0]);
   return getReceipt(db, id);
+}
+
+/**
+ * True when this profile already has a receipt that actually went out (or may have gone out) for
+ * the same media scope (a specific movie, or a specific season of a series). Used to enforce
+ * "never send a second SMS to the same recipient about the same movie/season" regardless of which
+ * event type (grab/import/request/available/...) triggers the send.
+ */
+export function hasMediaScopeNotification(
+  db: Database,
+  profileId: number,
+  mediaScopeKey: string,
+): boolean {
+  const row = firstRow(
+    db,
+    `
+    SELECT 1 FROM message_receipts
+    WHERE profile_id = ? AND media_scope_key = ? AND channel = 'sms'
+      AND submission_status IN ('submitted', 'submission_unknown')
+    LIMIT 1
+  `,
+    [profileId, mediaScopeKey],
+  );
+  return row !== null;
+}
+
+export function markReceiptSkipped(db: Database, receiptId: number, reason: string): void {
+  updateReceipt(db, receiptId, {
+    submission_status: "skipped",
+    delivery_status: "not_applicable",
+    provider_error: reason,
+  });
 }
 
 export function markReceiptRenderFailed(

@@ -12,8 +12,10 @@ import { getMediaInterestTargetForItem, profileHasMediaInterest } from "./mediaI
 import type { NotificationProfile } from "./profiles.ts";
 import {
   createPendingReceipt,
+  hasMediaScopeNotification,
   markReceiptRejected,
   markReceiptRenderFailed,
+  markReceiptSkipped,
   markReceiptSubmissionUnknown,
   markReceiptSubmitted,
   maskPhoneNumber,
@@ -111,6 +113,15 @@ export async function dispatchNotificationsForEvent(
   const profiles = listEligibleSmsProfiles(db, canonical.source, canonical.eventType)
     .filter((profile) => !mediaTarget || profileHasMediaInterest(db, profile.id, mediaTarget));
 
+  // Scopes dedupe to a single movie, or a single season of a series, regardless of which event
+  // type (grab/import/request/available/...) is driving the send. Null when the event has no
+  // resolved media (health checks, auth failures, opt-in welcome texts, etc.) — those aren't
+  // "about a movie" so the one-SMS-per-media rule doesn't apply to them.
+  const mediaScopeKey = buildMediaScopeKey(
+    options.mediaItemId,
+    canonical.templateContext.seasonNumber,
+  );
+
   if (profiles.length === 0) {
     logNotification("info", "notifications.dispatch.no_eligible_profiles", {
       eventId: event.id,
@@ -146,6 +157,7 @@ export async function dispatchNotificationsForEvent(
       renderedBody: null,
       renderContext: profileContext.templateContext,
       destinationMasked: maskPhoneNumber(profile.dispatchPhoneNumber),
+      mediaScopeKey,
     });
 
     if (!receipt) {
@@ -158,6 +170,26 @@ export async function dispatchNotificationsForEvent(
         source: canonical.source,
         eventType: canonical.eventType,
         dedupeKey: canonical.eventDedupeKey,
+      });
+      continue;
+    }
+
+    if (mediaScopeKey && hasMediaScopeNotification(db, profile.id, mediaScopeKey)) {
+      markReceiptSkipped(
+        db,
+        receipt.id,
+        "Recipient already received an SMS about this movie/season.",
+      );
+      summary.skipped += 1;
+      logNotification("info", "notifications.dispatch.receipt_skipped", {
+        reason: "duplicate_media_recipient",
+        eventId: event.id,
+        receiptId: receipt.id,
+        profileId: profile.id,
+        phoneNumberId: profile.phoneNumberId,
+        source: canonical.source,
+        eventType: canonical.eventType,
+        mediaScopeKey,
       });
       continue;
     }
@@ -369,6 +401,21 @@ function getSmsEligibilitySummary(
     optedOut: Number(row[4] ?? 0),
     eligible: Number(row[5] ?? 0),
   };
+}
+
+/**
+ * Builds the key used to dedupe SMS sends per recipient: one key per movie, or per season of a
+ * series when a season number is known (so Season 2 can still notify after Season 1 already has).
+ * Episode-level events fold into their season's key on purpose — a recipient who was already
+ * texted about a season shouldn't get a second text per episode within it.
+ */
+function buildMediaScopeKey(
+  mediaItemId: number | null | undefined,
+  seasonNumber: string | undefined,
+): string | null {
+  if (mediaItemId == null) return null;
+  const season = seasonNumber?.trim();
+  return season ? `media:${mediaItemId}:season:${season}` : `media:${mediaItemId}`;
 }
 
 function mediaItemTemplateContext(

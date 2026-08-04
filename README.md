@@ -304,6 +304,14 @@ Textbelt is the only SMS provider. Real SMS requires all of these:
 Imported Jellyfin profiles are not automatically opted into SMS. `/webhook/test` and Event Console
 test events never send SMS.
 
+Even when every rule above is satisfied, a recipient never gets more than one SMS about the same
+movie, or the same season of a series, no matter how many different event types (grab, import,
+request pending/approved/available, Jellyfin added, ...) fire for it over that title's lifecycle.
+The first successful send for a given profile + movie (or profile + season) permanently closes the
+door on any later one for that same profile and title; the receipt for every later attempt is
+recorded with submission status `skipped`. This is separate from — and layered in front of — the
+existing exact-duplicate-event protection described below.
+
 ## Message Receipts
 
 Every attempted outbound SMS creates a durable receipt before provider submission. Receipts preserve

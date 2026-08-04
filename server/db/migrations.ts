@@ -437,6 +437,15 @@ const migrations: Migration[] = [
       CREATE INDEX message_receipts_profile_phone_idx ON message_receipts(profile_phone_number_id, created_at);
     `,
   },
+  {
+    version: 8,
+    name: "message_receipts_media_scope_dedupe",
+    sql: `
+      ALTER TABLE message_receipts ADD COLUMN media_scope_key TEXT;
+      CREATE INDEX message_receipts_media_scope_profile_idx
+        ON message_receipts(profile_id, media_scope_key, submission_status);
+    `,
+  },
 ];
 
 export function runMigrations(db: DB): void {
