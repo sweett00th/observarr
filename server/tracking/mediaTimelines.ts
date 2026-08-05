@@ -160,7 +160,7 @@ function findOrCreateMediaTimeline(db: Database, event: LiveEvent): number | nul
     return Number(exact[0]);
   }
 
-  const looseId = findLooseMediaTimelineMatch(db, event);
+  const looseId = findLooseMediaTimelineMatch(db, event, identity.mediaType);
 
   if (looseId) {
     updateMediaMetadata(db, looseId, event, identity);
@@ -299,14 +299,25 @@ function shouldUpdateCanonicalTitle(
   return normalizeSearchText(currentTitle) !== normalizeSearchText(candidateTitle);
 }
 
-function findLooseMediaTimelineMatch(db: Database, event: LiveEvent): number | null {
-  const haystack = normalizeSearchText([
-    event.title,
-    event.message,
-    event.entityTitle ?? "",
-    JSON.stringify(event.rawPayload ?? event.rawSummary ?? null),
-  ].join(" "));
-  const candidates = [...db.query("SELECT id, normalized_title FROM media_items")].map((row) => ({
+function findLooseMediaTimelineMatch(
+  db: Database,
+  event: LiveEvent,
+  mediaType?: string | null,
+): number | null {
+  // Deliberately excludes the raw payload from the search text. Matching against the full JSON
+  // (usernames, URLs, ids, image links, ...) risked false positives whenever a short/common title
+  // ("Her", "It", "Elf", ...) coincidentally appeared as a substring somewhere else in the
+  // payload, misfiling a brand-new event onto an unrelated pre-existing title — and notifying
+  // whoever was interested in that unrelated title.
+  const haystack = normalizeSearchText(
+    [event.title, event.message, event.entityTitle ?? ""].join(" "),
+  );
+  const candidates = [...db.query(
+    mediaType
+      ? "SELECT id, normalized_title FROM media_items WHERE media_type = ? OR media_type IS NULL"
+      : "SELECT id, normalized_title FROM media_items",
+    mediaType ? [mediaType] : [],
+  )].map((row) => ({
     id: Number(row[0]),
     title: String(row[1]),
   }));

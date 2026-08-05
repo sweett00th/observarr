@@ -9,6 +9,7 @@ import {
 import { getOrCreateEventTemplate } from "./eventTemplates.ts";
 import { buildCanonicalEventContext, withProfileContext } from "./eventContext.ts";
 import { getMediaInterestTargetForItem, profileHasMediaInterest } from "./mediaInterests.ts";
+import { isMediaEventType } from "./templateCatalog.ts";
 import type { NotificationProfile } from "./profiles.ts";
 import {
   createPendingReceipt,
@@ -110,8 +111,25 @@ export async function dispatchNotificationsForEvent(
   });
 
   const mediaTarget = getMediaInterestTargetForItem(db, options.mediaItemId);
+  // Event types in the catalog are either inherently non-media (health checks, auth failures,
+  // opt-in welcome texts — no "interest" concept applies, so those broadcast to every subscriber)
+  // or inherently about a specific piece of media. For the latter, if identity resolution failed
+  // to produce a mediaTarget, the gate must fail CLOSED (notify no one) rather than open — a
+  // failed lookup is not the same as "there's nothing to be interested in," and defaulting to
+  // "notify everyone subscribed to the event type" would leak one requester's activity to every
+  // other subscriber. See getMediaInterestTargetForItem / isMediaEventType.
+  const eventRequiresMedia = isMediaEventType(canonical.source, canonical.eventType);
+  if (eventRequiresMedia && !mediaTarget) {
+    logNotification("warn", "notifications.dispatch.media_identity_unresolved", {
+      eventId: event.id,
+      source: canonical.source,
+      eventType: canonical.eventType,
+    });
+  }
   const profiles = listEligibleSmsProfiles(db, canonical.source, canonical.eventType)
-    .filter((profile) => !mediaTarget || profileHasMediaInterest(db, profile.id, mediaTarget));
+    .filter((profile) =>
+      mediaTarget ? profileHasMediaInterest(db, profile.id, mediaTarget) : !eventRequiresMedia
+    );
 
   // Identifies a single movie, or a single season of a series, for dedupe purposes. Combined with
   // canonical.eventType below, this caps each (event type, movie/season) pair at one SMS per

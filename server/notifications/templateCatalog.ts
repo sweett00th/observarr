@@ -471,6 +471,25 @@ export function isCatalogEvent(source: string, eventType: string): boolean {
   return catalogByKey.has(`${source}:${eventType}`);
 }
 
+// Event types that are never about a specific movie/season — system health, auth, and consent
+// events. Everything else in the catalog concerns a specific piece of media, so when its identity
+// can't be resolved (see dispatchNotificationsForEvent), the media-interest gate must fail closed
+// (notify no one) rather than open (notify everyone subscribed to the event type).
+const nonMediaEventKeys = new Set<string>([
+  "jellyfin:playback_error",
+  "jellyfin:authentication_failed",
+  "jellyfin:user_locked_out",
+  "radarr:health_issue",
+  "sonarr:health_issue",
+  "system:app_started",
+  "system:health_warning",
+  "system:sms_opt_in_welcome",
+]);
+
+export function isMediaEventType(source: string, eventType: string): boolean {
+  return !nonMediaEventKeys.has(`${source}:${eventType}`);
+}
+
 export function allowedVariableNames(source: string, eventType: string): Set<string> {
   const item = getCatalogEvent(source, eventType);
   return new Set(item?.variables.map((variable) => variable.name) ?? []);

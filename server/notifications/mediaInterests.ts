@@ -120,8 +120,12 @@ export function profileHasMediaInterest(
     params.push(target.mediaItemId);
   }
   if (target.tmdbId) {
-    clauses.push("tmdb_id = ?");
-    params.push(target.tmdbId);
+    // TMDB movie IDs and TV IDs are separate, independently-numbered spaces, so a movie and an
+    // unrelated show can share the same numeric ID — media_type must match too, or a profile
+    // interested in one gets notified about the other. Matches the write-side scoping already
+    // used by findExistingInterest and the profile_media_interests_tmdb_idx unique index.
+    clauses.push("(tmdb_id = ? AND media_type IS ?)");
+    params.push(target.tmdbId, target.mediaType);
   }
   if (target.jellyfinSeriesId) {
     clauses.push("jellyfin_series_id = ?");
