@@ -68,8 +68,8 @@ export function identifyMedia(event: LiveEvent): MediaIdentity | null {
     imdbId,
     tvdbId,
     thumbnailUrl: pickThumbnailUrl(raw),
-    jellyfinItemId,
-    jellyfinSeriesId,
+    jellyfinItemId: jellyfinItemId ?? null,
+    jellyfinSeriesId: jellyfinSeriesId ?? null,
     year: year ?? null,
   };
 }
