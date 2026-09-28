@@ -146,3 +146,17 @@ export function getJellyfinApiKey(): string | undefined {
 export function isJellyfinConfigured(): boolean {
   return Boolean(getJellyfinUrl() && getJellyfinApiKey());
 }
+
+/** steamreviews' LAN address, for importing its Steam users, e.g. http://192.168.1.10:3040. */
+export function getSteamreviewsUrl(): string | undefined {
+  let value = getEnv("STEAMREVIEWS_URL");
+  while (value?.endsWith("/")) {
+    value = value.slice(0, -1);
+  }
+  return value || undefined;
+}
+
+/** The Steam import authenticates with SHARED_SECRET, which steamreviews knows as OBSERVARR_SECRET. */
+export function isSteamreviewsConfigured(): boolean {
+  return Boolean(getSteamreviewsUrl() && getSharedSecret());
+}

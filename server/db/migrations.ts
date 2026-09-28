@@ -446,6 +446,44 @@ const migrations: Migration[] = [
         ON message_receipts(profile_id, media_scope_key, submission_status);
     `,
   },
+  {
+    version: 9,
+    name: "steam_identities",
+    // SQLite can't alter a CHECK constraint, so the table is rebuilt to also allow "steam"
+    // identities (SteamID64s imported from steamreviews). Rows and ids are kept as they are.
+    sql: `
+      CREATE TABLE profile_external_identities_next (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL,
+        provider TEXT NOT NULL CHECK (provider IN ('jellyfin', 'seerr', 'steam')),
+        external_user_id TEXT NOT NULL,
+        username TEXT,
+        email TEXT,
+        last_synced_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES notification_profiles(id) ON DELETE CASCADE,
+        UNIQUE(provider, external_user_id),
+        UNIQUE(profile_id, provider)
+      );
+
+      INSERT INTO profile_external_identities_next (
+        id, profile_id, provider, external_user_id, username, email, last_synced_at,
+        created_at, updated_at
+      )
+      SELECT id, profile_id, provider, external_user_id, username, email, last_synced_at,
+        created_at, updated_at
+      FROM profile_external_identities;
+
+      DROP TABLE profile_external_identities;
+      ALTER TABLE profile_external_identities_next RENAME TO profile_external_identities;
+
+      CREATE INDEX profile_external_identities_profile_id_idx
+        ON profile_external_identities(profile_id);
+      CREATE INDEX profile_external_identities_provider_username_idx
+        ON profile_external_identities(provider, username);
+    `,
+  },
 ];
 
 export function runMigrations(db: DB): void {

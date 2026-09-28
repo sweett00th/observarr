@@ -42,7 +42,10 @@ export function buildCanonicalEventContext(
     }
   }
   const sourceLabel = sourceDisplayName(event.source);
-  const mediaTitle = event.entityTitle ||
+  const game: Record<string, string | undefined> = event.source === "steamreviews"
+    ? steamreviewsContext(raw)
+    : {};
+  const mediaTitle = game.gameTitle || event.entityTitle ||
     pickNestedString(raw, [["movie", "title"], ["series", "title"], ["episode", "title"]]) ||
     pickString(raw, ["mediaTitle", "title", "subject", "name", "Name"]);
   const context = compactStringRecord({
@@ -83,6 +86,7 @@ export function buildCanonicalEventContext(
     username: pickString(raw, ["username", "Username", "userName", "Name"]),
     deviceName: pickString(raw, ["deviceName", "DeviceName", "clientName"]),
     itemType: pickString(raw, ["itemType", "ItemType", "mediaType", "MediaType"]),
+    ...game,
   });
 
   return {
@@ -174,8 +178,36 @@ function compactStringRecord(values: Record<string, unknown>): Record<string, st
   return result;
 }
 
+/**
+ * Template variables for a steamreviews event: its payload carries the game, its Steam rating and
+ * the analysis. A game without a rating yet still renders ("Not rated yet").
+ */
+function steamreviewsContext(raw: Record<string, unknown>): Record<string, string | undefined> {
+  const game = isObject(raw.game) ? raw.game : {};
+  const rating = isObject(raw.rating) ? raw.rating : {};
+  const analysis = isObject(raw.analysis) ? raw.analysis : {};
+  const complaints = Array.isArray(analysis.topComplaints) ? analysis.topComplaints : [];
+  const topComplaints = complaints
+    .filter(isObject)
+    .map((complaint) =>
+      typeof complaint.label === "string" && typeof complaint.share === "number"
+        ? `${complaint.label} ${Math.round(complaint.share * 100)}%`
+        : null
+    )
+    .filter((part): part is string => part !== null)
+    .join(", ");
+  return {
+    gameTitle: pickString(game, ["name"]),
+    ratingLabel: pickString(rating, ["label"]) ?? "Not rated yet",
+    topComplaints: topComplaints || "none stood out",
+    analysisUrl: pickString(game, ["url"]),
+    steamUrl: pickString(game, ["steamUrl"]),
+  };
+}
+
 function sourceDisplayName(source: string): string {
   if (source === "sabnzbd") return "SABnzbd";
+  if (source === "steamreviews") return "Steam Reviews";
   return source.charAt(0).toUpperCase() + source.slice(1);
 }
 

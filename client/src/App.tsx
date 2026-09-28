@@ -105,6 +105,7 @@ type EventSourceName =
   | "radarr"
   | "sonarr"
   | "sabnzbd"
+  | "steamreviews"
   | "system"
   | "test";
 
@@ -1463,6 +1464,7 @@ const sourceOptions: Array<{ label: string; value: EventSourceName[]; key: strin
   { label: "Radarr", value: ["radarr"], key: "radarr" },
   { label: "Sonarr", value: ["sonarr"], key: "sonarr" },
   { label: "SABnzbd", value: ["sabnzbd"], key: "sabnzbd" },
+  { label: "Steam Reviews", value: ["steamreviews"], key: "steamreviews" },
   { label: "System/Test", value: ["system", "test"], key: "system-test" },
 ];
 
@@ -1472,6 +1474,7 @@ const sourceColors: Record<EventSourceName, string> = {
   radarr: "#fb923c",
   sonarr: "#4ade80",
   sabnzbd: "#facc15",
+  steamreviews: "#60a5fa",
   system: "#9ca3af",
   test: "#9ca3af",
 };
@@ -1482,6 +1485,7 @@ const sourceLabels: Record<EventSourceName, string> = {
   radarr: "Radarr",
   sonarr: "Sonarr",
   sabnzbd: "SABnzbd",
+  steamreviews: "Steam Reviews",
   system: "System",
   test: "Test",
 };

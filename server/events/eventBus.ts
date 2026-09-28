@@ -1,8 +1,4 @@
-import {
-  getEventBufferMax,
-  getEventBufferMinutes,
-  getEventRawMaxBytes,
-} from "../lib/config.ts";
+import { getEventBufferMax, getEventBufferMinutes, getEventRawMaxBytes } from "../lib/config.ts";
 
 export type EventSourceName =
   | "jellyfin"
@@ -10,6 +6,7 @@ export type EventSourceName =
   | "radarr"
   | "sonarr"
   | "sabnzbd"
+  | "steamreviews"
   | "system"
   | "test";
 
@@ -302,6 +299,10 @@ function sourceLabel(source: EventSourceName): string {
 
   if (source === "sabnzbd") {
     return "SABnzbd";
+  }
+
+  if (source === "steamreviews") {
+    return "Steam Reviews";
   }
 
   return source.charAt(0).toUpperCase() + source.slice(1);

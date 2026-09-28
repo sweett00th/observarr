@@ -6,6 +6,7 @@ import MarkEmailUnreadIcon from "@mui/icons-material/MarkEmailUnread";
 import NotificationsIcon from "@mui/icons-material/Notifications";
 import NotificationsOffIcon from "@mui/icons-material/NotificationsOff";
 import ImportExportIcon from "@mui/icons-material/ImportExport";
+import LinkIcon from "@mui/icons-material/Link";
 import PhoneIcon from "@mui/icons-material/Phone";
 import SearchIcon from "@mui/icons-material/Search";
 import {
@@ -20,6 +21,7 @@ import {
   Checkbox,
   Chip,
   Dialog,
+  DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
@@ -38,7 +40,14 @@ import {
 } from "@mui/material";
 import { useEffect, useState } from "react";
 
-type IdentityProvider = "jellyfin" | "seerr";
+type IdentityProvider = "jellyfin" | "seerr" | "steam";
+
+type ImportSource = "jellyfin" | "steamreviews";
+
+const importSourceLabels: Record<ImportSource, string> = {
+  jellyfin: "Jellyfin",
+  steamreviews: "Steam",
+};
 
 type ProfileSummary = {
   id: number;
@@ -140,6 +149,8 @@ type EditorState = {
   seerrUserId: string;
   seerrUsername: string;
   seerrEmail: string;
+  steamId: string;
+  steamName: string;
   smsOptedIn: boolean;
   phoneNumbers: Array<{
     id?: number;
@@ -182,6 +193,7 @@ export function NotificationProfilesManager({
     TemplateCatalogEvent | null
   >(null);
   const [expandedPhoneId, setExpandedPhoneId] = useState<number | null>(null);
+  const [linking, setLinking] = useState(false);
   const [phoneReceipts, setPhoneReceipts] = useState<
     Record<number, PhoneReceipt[]>
   >({});
@@ -312,18 +324,12 @@ export function NotificationProfilesManager({
     }
   }
 
-  async function importJellyfinUsers() {
+  async function importUsers(source: ImportSource) {
+    const label = importSourceLabels[source];
     setImporting(true);
     setMessage(null);
     try {
-      const response = await fetch("/api/integrations/jellyfin/import-users", {
-        method: "POST",
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Jellyfin import failed");
-      }
-      const summary = data.summary as ImportSummary;
+      const summary = await requestImport(source);
       await fetchProfiles();
       if (selectedId) {
         await fetchProfile(selectedId);
@@ -332,12 +338,12 @@ export function NotificationProfilesManager({
       setMessage({
         severity: "success",
         text:
-          `Jellyfin import: ${summary.created} created, ${summary.updated} updated, ${summary.avatarsFetched} avatars.`,
+          `${label} import: ${summary.created} created, ${summary.updated} updated, ${summary.avatarsFetched} avatars.`,
       });
     } catch (error) {
       setMessage({
         severity: "error",
-        text: error instanceof Error ? error.message : "Jellyfin import failed",
+        text: error instanceof Error ? error.message : `${label} import failed`,
       });
     } finally {
       setImporting(false);
@@ -383,6 +389,12 @@ export function NotificationProfilesManager({
                     email: editor.seerrEmail,
                   }
                   : null,
+              steam: editor.steamId || editor.steamName
+                ? {
+                  externalUserId: editor.steamId,
+                  username: editor.steamName,
+                }
+                : null,
             },
           }),
         },
@@ -474,13 +486,23 @@ export function NotificationProfilesManager({
                 >
                   Create Profile
                 </Button>
+              </Stack>
+              <Stack direction="row" spacing={1}>
                 <Button
                   startIcon={<ImportExportIcon />}
                   variant="outlined"
-                  onClick={importJellyfinUsers}
+                  onClick={() => importUsers("jellyfin")}
                   disabled={importing}
                 >
                   {importing ? "Importing" : "Import Jellyfin Users"}
+                </Button>
+                <Button
+                  startIcon={<ImportExportIcon />}
+                  variant="outlined"
+                  onClick={() => importUsers("steamreviews")}
+                  disabled={importing}
+                >
+                  {importing ? "Importing" : "Import Steam Users"}
                 </Button>
               </Stack>
               {message && (
@@ -523,6 +545,9 @@ export function NotificationProfilesManager({
                           )}
                           {profile.providers.includes("seerr") && (
                             <Chip size="small" label="Seerr" />
+                          )}
+                          {profile.providers.includes("steam") && (
+                            <Chip size="small" label="Steam" />
                           )}
                           <Chip
                             size="small"
@@ -643,16 +668,33 @@ export function NotificationProfilesManager({
                   </Grid>
 
                   <Box>
-                    <Typography variant="subtitle1" gutterBottom>
-                      Identity mappings
-                    </Typography>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      justifyContent="space-between"
+                      spacing={2}
+                    >
+                      <Typography variant="subtitle1" gutterBottom>
+                        Identity mappings
+                      </Typography>
+                      <Button
+                        size="small"
+                        startIcon={<LinkIcon />}
+                        onClick={() => setLinking(true)}
+                        disabled={profileCount < 2}
+                      >
+                        Link another profile
+                      </Button>
+                    </Stack>
                     <Typography
                       variant="body2"
                       color="text.secondary"
                       sx={{ mb: 2 }}
                     >
-                      Jellyfin mappings can be imported and refreshed. Seerr
-                      mappings are manually editable. Mapping a user does not
+                      Jellyfin and Steam mappings can be imported and refreshed.
+                      Seerr mappings are manually editable. The same person
+                      imported twice, say from Steam and from Jellyfin, can be
+                      linked into this one profile. Mapping a user does not
                       create a login account or enable notifications.
                     </Typography>
                     <Grid container spacing={2}>
@@ -712,6 +754,31 @@ export function NotificationProfilesManager({
                             setEditor({
                               ...editor,
                               seerrEmail: event.target.value,
+                            })}
+                          fullWidth
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          label="Steam ID (SteamID64)"
+                          value={editor.steamId}
+                          onChange={(event) =>
+                            setEditor({
+                              ...editor,
+                              steamId: event.target.value,
+                            })}
+                          helperText="Steam Reviews texts about the games this Steam user watches."
+                          fullWidth
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          label="Steam name"
+                          value={editor.steamName}
+                          onChange={(event) =>
+                            setEditor({
+                              ...editor,
+                              steamName: event.target.value,
                             })}
                           fullWidth
                         />
@@ -945,6 +1012,25 @@ export function NotificationProfilesManager({
         onClose={() => setTemplateEditorEvent(null)}
         onSaved={fetchCatalog}
       />
+      {details && (
+        <LinkProfileDialog
+          open={linking}
+          target={details}
+          onClose={() => setLinking(false)}
+          onLinked={async (summary, linked) => {
+            setLinking(false);
+            await fetchProfiles();
+            await fetchProfile(details.id);
+            onChanged();
+            setMessage({
+              severity: "success",
+              text: `Linked ${linked.displayName} into ${details.displayName}: ${
+                describeMerge(summary)
+              }`,
+            });
+          }}
+        />
+      )}
     </Dialog>
   );
 }
@@ -962,28 +1048,22 @@ export function NotificationProfilesActions({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function importUsers() {
+  async function importUsers(source: ImportSource) {
+    const label = importSourceLabels[source];
     setImporting(true);
     setMessage(null);
     setError(null);
     try {
-      const response = await fetch("/api/integrations/jellyfin/import-users", {
-        method: "POST",
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Jellyfin import failed");
-      }
-      const summary = data.summary as ImportSummary;
+      const summary = await requestImport(source);
       setMessage(
-        `${summary.created} created, ${summary.updated} updated, ${summary.avatarsFetched} avatars fetched.`,
+        `${label}: ${summary.created} created, ${summary.updated} updated, ${summary.avatarsFetched} avatars fetched.`,
       );
       onImported();
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
           ? caughtError.message
-          : "Jellyfin import failed",
+          : `${label} import failed`,
       );
     } finally {
       setImporting(false);
@@ -1002,15 +1082,220 @@ export function NotificationProfilesActions({
         <Button
           size="small"
           variant="outlined"
-          onClick={importUsers}
+          onClick={() => importUsers("jellyfin")}
           disabled={importing}
         >
           {importing ? "Importing" : "Import Jellyfin Users"}
+        </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => importUsers("steamreviews")}
+          disabled={importing}
+        >
+          {importing ? "Importing" : "Import Steam Users"}
         </Button>
       </Box>
       {message && <Alert severity="success">{message}</Alert>}
       {error && <Alert severity="error">{error}</Alert>}
     </Stack>
+  );
+}
+
+type MergeSummary = {
+  identities: number;
+  phoneNumbers: number;
+  preferences: number;
+  preferencesKept: number;
+  mediaInterests: number;
+  receipts: number;
+};
+
+const identityProviderLabels: Record<IdentityProvider, string> = {
+  jellyfin: "Jellyfin",
+  seerr: "Seerr",
+  steam: "Steam",
+};
+
+async function requestImport(source: ImportSource): Promise<ImportSummary> {
+  const response = await fetch(`/api/integrations/${source}/import-users`, {
+    method: "POST",
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || `${importSourceLabels[source]} import failed`);
+  }
+  return data.summary as ImportSummary;
+}
+
+function describeMerge(summary: MergeSummary): string {
+  const counts: Array<[number, string, string]> = [
+    [summary.identities, "identity", "identities"],
+    [summary.phoneNumbers, "phone number", "phone numbers"],
+    [summary.preferences, "event setting", "event settings"],
+    [summary.mediaInterests, "media interest", "media interests"],
+    [summary.receipts, "message receipt", "message receipts"],
+  ];
+  const moved = counts
+    .filter(([count]) => count > 0)
+    .map(([count, one, many]) => `${count} ${count === 1 ? one : many}`);
+  return moved.length > 0 ? `moved ${moved.join(", ")}.` : "nothing needed moving.";
+}
+
+/**
+ * Links another profile into `target`: one person imported twice, e.g. from Steam and from
+ * Jellyfin. The server merges them and removes the other profile.
+ */
+function LinkProfileDialog({
+  open,
+  target,
+  onClose,
+  onLinked,
+}: {
+  open: boolean;
+  target: ProfileDetails;
+  onClose: () => void;
+  onLinked: (summary: MergeSummary, linked: ProfileSummary) => void | Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [options, setOptions] = useState<ProfileSummary[]>([]);
+  const [chosen, setChosen] = useState<ProfileSummary | null>(null);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setQuery("");
+      setChosen(null);
+      setError(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const timeout = window.setTimeout(async () => {
+      const response = await fetch(
+        `/api/notification-profiles?query=${encodeURIComponent(query)}`,
+      );
+      const data = await response.json();
+      if (response.ok) {
+        setOptions(
+          (data.profiles as ProfileSummary[]).filter((profile) => profile.id !== target.id),
+        );
+      }
+    }, 200);
+    return () => window.clearTimeout(timeout);
+  }, [open, query, target.id]);
+
+  async function link() {
+    if (!chosen) {
+      return;
+    }
+
+    setWorking(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/notification-profiles/${target.id}/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceProfileId: chosen.id }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Could not link the profiles");
+      }
+      await onLinked(data.summary as MergeSummary, chosen);
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error ? caughtError.message : "Could not link the profiles",
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Link a profile into {target.displayName}</DialogTitle>
+      <DialogContent dividers>
+        <Stack spacing={2}>
+          <Typography variant="body2" color="text.secondary">
+            For one person imported twice, say from Steam and from Jellyfin. The profile you pick
+            joins {target.displayName} and is removed: its identities, phone numbers (with their
+            opt-in state), media interests and message history move over. Event settings{" "}
+            {target.displayName} already has stay as they are.
+          </Typography>
+          <TextField
+            size="small"
+            label="Search profiles"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" />
+                </InputAdornment>
+              ),
+            }}
+          />
+          <List dense sx={{ maxHeight: 320, overflowY: "auto" }}>
+            {options.map((profile) => (
+              <ListItemButton
+                key={profile.id}
+                selected={chosen?.id === profile.id}
+                onClick={() => setChosen(profile)}
+                sx={{ borderRadius: 1 }}
+              >
+                <ListItemAvatar>
+                  <Avatar
+                    src={profile.hasAvatar
+                      ? `/api/notification-profiles/${profile.id}/avatar?v=${
+                        encodeURIComponent(profile.updatedAt)
+                      }`
+                      : undefined}
+                  >
+                    {initials(profile.displayName)}
+                  </Avatar>
+                </ListItemAvatar>
+                <ListItemText
+                  primary={profile.displayName}
+                  secondary={profile.providers.length > 0
+                    ? profile.providers.map((provider) => identityProviderLabels[provider])
+                      .join(" · ")
+                    : "No linked accounts"}
+                />
+              </ListItemButton>
+            ))}
+            {options.length === 0 && (
+              <Typography color="text.secondary" sx={{ p: 2 }}>
+                No other profiles match.
+              </Typography>
+            )}
+          </List>
+          {chosen && (
+            <Alert severity="warning">
+              {chosen.displayName} will be merged into {target.displayName} and removed. This can't
+              be undone.
+            </Alert>
+          )}
+          {error && <Alert severity="error">{error}</Alert>}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          variant="contained"
+          startIcon={<LinkIcon />}
+          onClick={link}
+          disabled={!chosen || working}
+        >
+          {working ? "Linking" : "Link profiles"}
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
@@ -1061,6 +1346,7 @@ function toEditorState(
 
   const jellyfin = identityByProvider.get("jellyfin");
   const seerr = identityByProvider.get("seerr");
+  const steam = identityByProvider.get("steam");
 
   return {
     displayName: profile.displayName,
@@ -1072,6 +1358,8 @@ function toEditorState(
     seerrUserId: seerr?.externalUserId ?? "",
     seerrUsername: seerr?.username ?? "",
     seerrEmail: seerr?.email ?? "",
+    steamId: steam?.externalUserId ?? "",
+    steamName: steam?.username ?? "",
     smsOptedIn: Boolean(profile.smsOptedInAt && !profile.smsOptedOutAt),
     phoneNumbers: (profile.phoneNumbers ?? []).map((phone) => ({
       id: phone.id,

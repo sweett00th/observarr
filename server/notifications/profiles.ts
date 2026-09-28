@@ -11,7 +11,16 @@ import {
 } from "./phoneNumbers.ts";
 import { isKnownNotificationEvent } from "./eventCatalog.ts";
 
-export type IdentityProvider = "jellyfin" | "seerr";
+export type IdentityProvider = "jellyfin" | "seerr" | "steam";
+
+const identityProviders = ["jellyfin", "seerr", "steam"] as const;
+const identityProviderLabels: Record<IdentityProvider, string> = {
+  jellyfin: "Jellyfin",
+  seerr: "Seerr",
+  steam: "Steam",
+};
+/** A SteamID64: what steamreviews knows people by. */
+const steamIdPattern = /^7656[0-9]{13}$/;
 
 type SqlValue = string | number | null;
 
@@ -493,6 +502,156 @@ export function updateProfileAvatar(
   );
 }
 
+export type MergeSummary = {
+  /** Identities (Jellyfin, Seerr, Steam) moved over. */
+  identities: number;
+  phoneNumbers: number;
+  /** Event preferences the kept profile didn't have. */
+  preferences: number;
+  /** Preferences both had: the kept profile's setting stays, the other is dropped. */
+  preferencesKept: number;
+  mediaInterests: number;
+  /** Past receipts now filed under the kept profile. */
+  receipts: number;
+};
+
+/**
+ * One person known to two services, e.g. a profile imported from Steam and one imported from
+ * Jellyfin, becomes one profile: everything on `sourceId` moves to `targetId`, which is kept, and
+ * the source is deleted. Phone numbers keep their own opt-in state. Where both profiles have the
+ * same event preference, the kept profile's wins, so a merge never turns on anything it had off.
+ * Receipts move too, so the one-text-per-event rule still holds for the merged person. Profiles
+ * that each have an identity of the same kind can't be merged: remove one first.
+ */
+export function mergeProfiles(
+  db: Database,
+  targetId: number,
+  sourceId: number,
+): { profile: ProfileDetails; summary: MergeSummary } | null {
+  if (targetId === sourceId) {
+    throw new ValidationError("A profile can't be merged into itself");
+  }
+
+  const target = getProfile(db, targetId);
+  const source = getProfile(db, sourceId);
+  if (!target || !source) {
+    return null;
+  }
+
+  const clash = firstRow(
+    db,
+    `
+    SELECT s.provider FROM profile_external_identities s
+    JOIN profile_external_identities t ON t.provider = s.provider AND t.profile_id = ?
+    WHERE s.profile_id = ?
+    LIMIT 1
+  `,
+    [targetId, sourceId],
+  );
+  if (clash) {
+    const provider = String(clash[0]);
+    const label = isIdentityProvider(provider) ? identityProviderLabels[provider] : provider;
+    throw new ConflictError(
+      `Both profiles have a ${label} identity. Remove one of them before merging.`,
+    );
+  }
+
+  const now = new Date().toISOString();
+  const run = (sql: string, params: SqlValue[]): number => {
+    db.query(sql, params);
+    return db.changes;
+  };
+
+  let summary: MergeSummary;
+  try {
+    db.execute("BEGIN");
+    const identities = run(
+      "UPDATE profile_external_identities SET profile_id = ?, updated_at = ? WHERE profile_id = ?",
+      [targetId, now, sourceId],
+    );
+    const phoneNumbers = run(
+      "UPDATE notification_profile_phone_numbers SET profile_id = ?, updated_at = ? WHERE profile_id = ?",
+      [targetId, now, sourceId],
+    );
+    const preferences = run(
+      `
+      UPDATE profile_event_preferences SET profile_id = ?, updated_at = ?
+      WHERE profile_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM profile_event_preferences kept
+          WHERE kept.profile_id = ?
+            AND kept.source = profile_event_preferences.source
+            AND kept.event_type = profile_event_preferences.event_type
+        )
+    `,
+      [targetId, now, sourceId, targetId],
+    );
+    const preferencesKept = Number(
+      firstRow(db, "SELECT COUNT(*) FROM profile_event_preferences WHERE profile_id = ?", [
+        sourceId,
+      ])?.[0] ?? 0,
+    );
+    const mediaInterests = run(
+      `
+      UPDATE profile_media_interests SET profile_id = ?, updated_at = ?
+      WHERE profile_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM profile_media_interests kept
+          WHERE kept.profile_id = ?
+            AND (
+              (kept.media_item_id IS NOT NULL
+                AND kept.media_item_id = profile_media_interests.media_item_id)
+              OR (kept.tmdb_id IS NOT NULL
+                AND kept.media_type IS profile_media_interests.media_type
+                AND kept.tmdb_id = profile_media_interests.tmdb_id)
+            )
+        )
+    `,
+      [targetId, now, sourceId, targetId],
+    );
+    const receipts = run("UPDATE message_receipts SET profile_id = ? WHERE profile_id = ?", [
+      targetId,
+      sourceId,
+    ]);
+    db.query("UPDATE textbelt_inbound_replies SET profile_id = ? WHERE profile_id = ?", [
+      targetId,
+      sourceId,
+    ]);
+    // The kept profile takes an email address or avatar only where it has none.
+    db.query(
+      `
+      UPDATE notification_profiles
+      SET email_address = COALESCE(email_address, ?),
+        avatar_filename = CASE WHEN avatar_filename IS NULL THEN ? ELSE avatar_filename END,
+        avatar_content_type = CASE WHEN avatar_filename IS NULL THEN ? ELSE avatar_content_type END,
+        updated_at = ?
+      WHERE id = ?
+    `,
+      [source.emailAddress, source.avatarFilename, source.avatarContentType, now, targetId],
+    );
+    // What didn't move (preferences and interests the kept profile already had) goes with it.
+    db.query("DELETE FROM notification_profiles WHERE id = ?", [sourceId]);
+    db.execute("COMMIT");
+    summary = {
+      identities,
+      phoneNumbers,
+      preferences,
+      preferencesKept,
+      mediaInterests,
+      receipts,
+    };
+  } catch (error) {
+    db.execute("ROLLBACK");
+    throw mapSqliteError(error);
+  }
+
+  const profile = getProfileDetails(db, targetId);
+  if (!profile) {
+    throw new Error("Merged profile could not be loaded");
+  }
+  return { profile, summary };
+}
+
 export function getAvatarFilePath(filename: string): string {
   return `${getAvatarDirectory().replaceAll("\\", "/").replace(/\/+$/, "")}/${filename}`;
 }
@@ -581,7 +740,7 @@ function normalizeProfileInput(input: ProfileInput, options: { requireDisplayNam
     result.smsOptedIn = input.smsOptedIn;
   }
 
-  for (const provider of ["jellyfin", "seerr"] as const) {
+  for (const provider of identityProviders) {
     if (provider in identities) {
       result.identities[provider] = normalizeIdentityInput(provider, identities[provider]);
     }
@@ -625,6 +784,10 @@ function normalizeIdentityInput(
     throw new ValidationError(`${provider} user ID is required when mapping that provider`);
   }
 
+  if (provider === "steam" && !steamIdPattern.test(externalUserId)) {
+    throw new ValidationError("Steam ID must be a 17-digit SteamID64, such as 76561197960287930");
+  }
+
   return {
     provider,
     externalUserId,
@@ -639,7 +802,7 @@ function upsertIdentityInputs(
   identities: Partial<Record<IdentityProvider, NormalizedIdentityInput | null>>,
   now: string,
 ): void {
-  for (const provider of ["jellyfin", "seerr"] as const) {
+  for (const provider of identityProviders) {
     if (!(provider in identities)) {
       continue;
     }
@@ -845,7 +1008,7 @@ function mapPreference(row: unknown[]): ProfilePreference {
 }
 
 function isIdentityProvider(value: string): value is IdentityProvider {
-  return value === "jellyfin" || value === "seerr";
+  return (identityProviders as readonly string[]).includes(value);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
