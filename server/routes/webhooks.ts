@@ -15,6 +15,7 @@ const webhookSources: EventSourceName[] = [
   "radarr",
   "sonarr",
   "sabnzbd",
+  "steamreviews",
 ];
 
 export function createWebhookRoutes(db: Database): Hono {
@@ -81,7 +82,10 @@ export function createWebhookRoutes(db: Database): Hono {
       }
 
       const event = eventBus.publish(normalizeWebhookEvent(source, payload.value));
-      const media = persistMediaEvent(db, event);
+      // A steamreviews event is about a game, not a movie or series: it has no media timeline,
+      // and its recipients are the game's watchers, listed by SteamID in the payload.
+      const fromSteamreviews = source === "steamreviews";
+      const media = fromSteamreviews ? null : persistMediaEvent(db, event);
       const autoSubscription = subscribeRequesterToSeerrMedia(db, event, media);
 
       if (source === "seerr") {
@@ -100,6 +104,7 @@ export function createWebhookRoutes(db: Database): Hono {
 
       const notifications = await dispatchNotificationsForEvent(db, event, {
         mediaItemId: media?.id ?? null,
+        ...(fromSteamreviews ? { steamWatcherIds: steamWatcherIds(payload.value) } : {}),
       });
 
       return c.json({
@@ -198,6 +203,16 @@ async function readJsonPayload(c: Context): Promise<JsonPayloadResult> {
       },
     };
   }
+}
+
+/** The SteamID64s in a steamreviews event's `watchers`: who may be texted about it. */
+function steamWatcherIds(payload: unknown): Set<string> {
+  const watchers = isObject(payload) && Array.isArray(payload.watchers) ? payload.watchers : [];
+  return new Set(
+    watchers
+      .map((watcher) => (isObject(watcher) ? watcher.steamId : null))
+      .filter((steamId): steamId is string => typeof steamId === "string"),
+  );
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

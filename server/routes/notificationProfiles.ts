@@ -8,6 +8,7 @@ import {
   getProfile,
   getProfileDetails,
   listProfiles,
+  mergeProfiles,
   replacePreferences,
   updateProfile,
   ValidationError,
@@ -113,6 +114,49 @@ export function createNotificationProfileRoutes(db: Database): Hono {
         );
       }
       return c.json({ ok: true, profile });
+    } catch (error) {
+      return profileErrorResponse(c, error);
+    }
+  });
+
+  // Folds another profile (e.g. one imported from Steam) into this one (e.g. imported from
+  // Jellyfin): the same person, known to two services. The other profile is deleted.
+  profiles.post("/:id/merge", async (c) => {
+    const id = parseProfileId(c.req.param("id"));
+    if (!id) {
+      return c.json(badProfileId(), 400);
+    }
+
+    const payload = await readJson(c);
+    if (!payload.ok) {
+      return c.json(payload.body, 400);
+    }
+
+    const sourceId = payload.value.sourceProfileId;
+    if (typeof sourceId !== "number" || !Number.isInteger(sourceId) || sourceId <= 0) {
+      return c.json({
+        ok: false,
+        status: "bad_request",
+        error: "sourceProfileId must be a notification profile id",
+      }, 400);
+    }
+
+    try {
+      const merged = mergeProfiles(db, id, sourceId);
+      if (!merged) {
+        return c.json(
+          { ok: false, status: "not_found", error: "Notification profile not found" },
+          404,
+        );
+      }
+      console.log(JSON.stringify({
+        event: "notification_profile.merged",
+        at: new Date().toISOString(),
+        profileId: id,
+        mergedProfileId: sourceId,
+        ...merged.summary,
+      }));
+      return c.json({ ok: true, ...merged });
     } catch (error) {
       return profileErrorResponse(c, error);
     }

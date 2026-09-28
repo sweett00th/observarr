@@ -220,6 +220,39 @@ const jellyfinVariables: TemplateVariable[] = [
   },
 ];
 
+const steamreviewsVariables: TemplateVariable[] = [
+  {
+    name: "gameTitle",
+    label: "Game title",
+    description: "The game's name on Steam.",
+    example: "Cities: Skylines II",
+  },
+  {
+    name: "ratingLabel",
+    label: "Steam rating",
+    description: 'Steam\'s rating across all languages, or "Not rated yet".',
+    example: "Mixed",
+  },
+  {
+    name: "topComplaints",
+    label: "Main complaints",
+    description: "The largest main complaints in the negative reviews, with their shares.",
+    example: "Bugs and crashes 47%, Performance 24%, Price 13%",
+  },
+  {
+    name: "analysisUrl",
+    label: "Analysis link",
+    description: "The game's page on steamreviews.",
+    example: "https://steamreviews.famdam.app/games/949230",
+  },
+  {
+    name: "steamUrl",
+    label: "Steam store link",
+    description: "The game's Steam store page.",
+    example: "https://store.steampowered.com/app/949230/",
+  },
+];
+
 const consentVariables: TemplateVariable[] = [
   {
     name: "optInKeyword",
@@ -434,6 +467,25 @@ export const templateCatalog: TemplateCatalogEvent[] = [
     sabVariables,
   ),
 
+  {
+    ...event(
+      "steamreviews",
+      "Steam Reviews",
+      "analysis_ready",
+      "Analysis ready",
+      "steamreviews finished analyzing the negative reviews of a game. Only people who watch that game on steamreviews (their profile has its Steam identity) are texted.",
+      steamreviewsVariables,
+    ),
+    // Kept under one SMS (160 characters) for most games.
+    defaultSmsTemplate:
+      "{gameTitle} ({ratingLabel}): main complaints {topComplaints}. {analysisUrl}",
+    defaultEmailSubjectTemplate: "[ObservaRR] {gameTitle}: review analysis ready",
+    defaultEmailBodyTemplate: `{eventMessage}
+
+Why people leave negative reviews: {analysisUrl}
+Steam: {steamUrl}`,
+  },
+
   event("system", "System", "app_started", "App started", "ObservaRR started."),
   event(
     "system",
@@ -484,6 +536,9 @@ const nonMediaEventKeys = new Set<string>([
   "system:app_started",
   "system:health_warning",
   "system:sms_opt_in_welcome",
+  // Not about a movie or series: recipients are the game's watchers on steamreviews instead (see
+  // dispatchNotificationsForEvent), and without that list nobody is texted.
+  "steamreviews:analysis_ready",
 ]);
 
 export function isMediaEventType(source: string, eventType: string): boolean {
@@ -547,6 +602,9 @@ export function mapToCatalogEventType(source: string, eventType: string): string
     system: {
       appstarted: "app_started",
       healthwarning: "health_warning",
+    },
+    steamreviews: {
+      analysisready: "analysis_ready",
     },
   };
   const mapped = aliases[source]?.[normalized] ?? eventType;

@@ -120,10 +120,16 @@ npm --prefix client run typecheck
 - `PUT /api/notification-profiles/:id/preferences` replaces the saved event preference set. It
   requires login.
 - `GET /api/notification-profiles/:id/avatar` streams a cached imported avatar. It requires login.
+- `POST /api/notification-profiles/:id/merge` with `{"sourceProfileId": n}` links another profile
+  into this one (the same person imported twice) and deletes the other. It requires login.
 - `GET /api/integrations/jellyfin/status` returns safe Jellyfin configuration status. It requires
   login.
 - `POST /api/integrations/jellyfin/import-users` imports Jellyfin users into notification profiles.
   It requires login.
+- `GET /api/integrations/steamreviews/status` returns whether the Steam import is configured. It
+  requires login.
+- `POST /api/integrations/steamreviews/import-users` imports steamreviews' Steam users into
+  notification profiles. It requires login.
 - `GET /api/event-templates/catalog` returns the canonical template catalog, variables, defaults,
   and current template summaries. It requires login.
 - `GET /api/event-templates` lists global event templates. It requires login.
@@ -138,8 +144,9 @@ npm --prefix client run typecheck
 - `GET /api/message-receipts/:id` returns safe receipt details. It requires login.
 - `POST /webhook/test` accepts JSON, logs a summary, emits a live test event, and returns the
   summary. It does not send SMS.
-- `POST /webhook/jellyfin`, `/webhook/seerr`, `/webhook/radarr`, `/webhook/sonarr`, and
-  `/webhook/sabnzbd` accept JSON and emit normalized live events. They do not send SMS.
+- `POST /webhook/jellyfin`, `/webhook/seerr`, `/webhook/radarr`, `/webhook/sonarr`,
+  `/webhook/sabnzbd` and `/webhook/steamreviews` accept JSON, emit normalized live events, and
+  dispatch SMS to subscribed, opted-in profiles as described under Event Templates and SMS Delivery.
 
 Unknown `/api/*` and `/webhook/*` routes return JSON 404 responses. Unknown non-API routes fall back
 to the React `index.html` for future client-side routing.
@@ -396,6 +403,41 @@ Importing Jellyfin users:
 Avatar files are not exposed as an unrestricted static directory. The browser loads them only
 through the authenticated `/api/notification-profiles/:id/avatar` endpoint.
 
+## Steam Reviews Integration
+
+[steamreviews](https://github.com/sweett00th/steamreviews) explains why a Steam game gets negative
+reviews. People sign in to it with Steam and watch games. ObservaRR takes two things from it:
+
+1. **Steam users.** `Import Steam Users` fetches everyone who signed in to steamreviews, from its LAN
+   address (`STEAMREVIEWS_URL`, e.g. `http://192.168.1.50:3040`), authenticated with
+   `SHARED_SECRET` in an `x-observarr-secret` header. steamreviews knows the same value as
+   `OBSERVARR_SECRET` and answers only requests that did not come through its public reverse proxy.
+   Each Steam user becomes a profile with a `steam` identity (their SteamID64), or updates the
+   profile that already has it. Nobody is opted in to anything, and a profile that has a picture
+   keeps it; otherwise the Steam avatar is cached, fetched only from Steam's avatar CDN.
+2. **"Analysis ready" events** at `POST /webhook/steamreviews`, sent by steamreviews with
+   `x-sms-secret` when it finishes analyzing a game. The payload lists the game's watchers by
+   SteamID64. An event is texted only to profiles whose Steam identity is among those watchers, and
+   only if the usual rules hold (event preference with SMS, enabled and opted-in phone number).
+   Without a watcher list, nobody is texted. These events are not movies or series: they don't
+   appear in Media Timelines. The global template `steamreviews:analysis_ready` has the variables
+   `{gameTitle}`, `{ratingLabel}`, `{topComplaints}`, `{analysisUrl}` and `{steamUrl}`.
+
+### Linking profiles
+
+The same person can arrive twice: from Jellyfin and from Steam, or someone with only one of them.
+Any profile can be the person's canonical profile. Open it and use `Link another profile` to fold
+the other one into it:
+
+- identities, phone numbers (each keeping its own opt-in state), media interests and message
+  receipts move over, and the other profile is deleted;
+- where both profiles have a preference for the same event, the kept profile's setting stays, so
+  linking never turns on anything the kept profile had off;
+- two profiles that each have an identity of the same kind (say two Jellyfin users) can't be
+  linked: remove one of the identities first.
+
+Receipts moving over keeps the one-text-per-event rule for the linked person.
+
 ## SQLite Persistence
 
 The app stores local state in one SQLite database file. By default:
@@ -589,6 +631,7 @@ Copy `.env.example` for local reference only. In Unraid, set values through the 
 | `TEXTBELT_SENDER`        | No                   | Optional approved Textbelt sender name.                                                                                                |
 | `JELLYFIN_URL`           | Import only          | Internal Jellyfin base URL used only by the server for profile import.                                                                 |
 | `JELLYFIN_API_KEY`       | Import only          | Secret Jellyfin API key used only by the server for profile import.                                                                    |
+| `STEAMREVIEWS_URL`       | Import only          | steamreviews' LAN address for importing its Steam users. Uses `SHARED_SECRET` (steamreviews' `OBSERVARR_SECRET`).                     |
 
 Do not commit real secrets. Textbelt keys must never be committed. Twilio is no longer supported.
 Email templates are stored, but email transport is not implemented.

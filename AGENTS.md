@@ -66,3 +66,13 @@ Current durable architecture decisions:
   the legacy single profile phone field.
 - Media notification dispatch is gated by profile media interests. Profiles default to zero
   movie/series interests.
+- steamreviews (the owner's Steam review analysis app) is a webhook source: `/webhook/steamreviews`.
+  Its `analysis_ready` events are about games, not media: they skip Media Timelines, and their
+  recipients are only profiles whose `steam` identity (a SteamID64) is in the event's `watchers`.
+  Without that list the gate fails closed.
+- Steam users are imported like Jellyfin users: admin-triggered, from steamreviews' LAN-only
+  endpoint, authenticated with `SHARED_SECRET` in `x-observarr-secret`. Imported people are not
+  opted in to anything.
+- A notification profile is the canonical person. Linking (`POST /api/notification-profiles/:id/merge`)
+  folds another profile into it; the kept profile's event preferences win, phone numbers keep their
+  own opt-in state, and receipts move so per-person dedupe still holds.

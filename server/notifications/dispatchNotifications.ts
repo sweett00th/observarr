@@ -50,7 +50,14 @@ export type DispatchSummary = {
 export async function dispatchNotificationsForEvent(
   db: Database,
   event: LiveEvent,
-  optionsOrClient: { client?: TextbeltClient; mediaItemId?: number | null } | TextbeltClient = {},
+  optionsOrClient:
+    | {
+      client?: TextbeltClient;
+      mediaItemId?: number | null;
+      /** For steamreviews events: the SteamID64s of the game's watchers. */
+      steamWatcherIds?: ReadonlySet<string>;
+    }
+    | TextbeltClient = {},
 ): Promise<DispatchSummary> {
   const options = "sendSms" in optionsOrClient ? { client: optionsOrClient } : optionsOrClient;
   const client = options.client ?? createTextbeltClient();
@@ -126,10 +133,16 @@ export async function dispatchNotificationsForEvent(
       eventType: canonical.eventType,
     });
   }
+  // steamreviews events are about a game: they go only to people who watch it on steamreviews,
+  // i.e. profiles whose Steam identity is among the event's watchers. No list means no one.
+  const steamWatchers = canonical.source === "steamreviews"
+    ? profilesWithSteamIds(db, options.steamWatcherIds)
+    : null;
   const profiles = listEligibleSmsProfiles(db, canonical.source, canonical.eventType)
     .filter((profile) =>
       mediaTarget ? profileHasMediaInterest(db, profile.id, mediaTarget) : !eventRequiresMedia
-    );
+    )
+    .filter((profile) => !steamWatchers || steamWatchers.has(profile.id));
 
   // Identifies a single movie, or a single season of a series, for dedupe purposes. Combined with
   // canonical.eventType below, this caps each (event type, movie/season) pair at one SMS per
@@ -148,6 +161,9 @@ export async function dispatchNotificationsForEvent(
       eventType: canonical.eventType,
       ...getSmsEligibilitySummary(db, canonical.source, canonical.eventType),
       mediaInterestRequired: Boolean(mediaTarget),
+      ...(steamWatchers
+        ? { steamWatchers: options.steamWatcherIds?.size ?? 0, linkedWatchers: steamWatchers.size }
+        : {}),
     });
     return summary;
   }
@@ -388,6 +404,27 @@ function listEligibleSmsProfiles(
     phoneNumberId: Number(row[12]),
     dispatchPhoneNumber: String(row[13]),
   }));
+}
+
+/** Profiles whose Steam identity is one of these SteamID64s. */
+function profilesWithSteamIds(
+  db: Database,
+  steamIds: ReadonlySet<string> | undefined,
+): Set<number> {
+  const ids = [...(steamIds ?? [])];
+  if (ids.length === 0) {
+    return new Set();
+  }
+
+  return new Set(
+    [...db.query(
+      `
+      SELECT profile_id FROM profile_external_identities
+      WHERE provider = 'steam' AND external_user_id IN (${ids.map(() => "?").join(", ")})
+    `,
+      ids,
+    )].map((row) => Number(row[0])),
+  );
 }
 
 function getSmsEligibilitySummary(
