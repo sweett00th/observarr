@@ -86,10 +86,11 @@ export async function fetchJellyfinPrimaryAvatar(userId: string): Promise<
   return { bytes, contentType };
 }
 
+// Jellyfin 12 no longer reads X-Emby-Token; this header works on 10.x and 12.x.
 function jellyfinHeaders(apiKey: string): HeadersInit {
   return {
     "Accept": "application/json",
-    "X-Emby-Token": apiKey,
+    "Authorization": `MediaBrowser Token="${apiKey}"`,
   };
 }
 
