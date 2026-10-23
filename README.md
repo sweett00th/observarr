@@ -153,14 +153,29 @@ to the React `index.html` for future client-side routing.
 
 ## Webhook Secret
 
-Webhook routes support an optional shared secret. If `SHARED_SECRET` is set, requests must include:
+Webhook routes support an optional shared secret. If `SHARED_SECRET` is set, every webhook request
+must present it in one of these ways, whichever the sending app can do:
 
 ```text
 x-sms-secret: your-secret
+Authorization: Bearer your-secret        ("Bearer " is optional)
+POST /webhook/sabnzbd?secret=your-secret
 ```
 
+Requests without it get a 401. Prefer a header when the sender has one, since a query parameter can
+end up in the sender's logs. Where each app puts it:
+
+- **Seerr**: the webhook agent's **Authorization Header** field, `Bearer your-secret`. It has no
+  other header field.
+- **Jellyfin** (Webhook plugin): a header on the destination, `x-sms-secret` = `your-secret`.
+- **Radarr / Sonarr**: append `?secret=your-secret` to the webhook URL, or add an `x-sms-secret`
+  header if the connection has a Headers field.
+- **SABnzbd** through Apprise: `json://host:3020/webhook/sabnzbd?+x-sms-secret=your-secret` (the `+`
+  makes Apprise send it as a header). A notification script can send the header itself.
+- **steamreviews** sends `x-sms-secret` from its `OBSERVARR_SECRET`.
+
 If `SHARED_SECRET` is unset, webhook requests are allowed and the server logs a startup warning. Set
-it in Unraid for normal use.
+it in Unraid for normal use. The Steam import needs it.
 
 ## Event Console
 
@@ -625,7 +640,7 @@ Copy `.env.example` for local reference only. In Unraid, set values through the 
 | `EVENT_RAW_MAX_BYTES`    | No                   | Maximum sanitized raw payload bytes included per in-memory event. Defaults to `20000`.                                                 |
 | `WEBHOOK_BASE_URL`       | Textbelt replies/dev | Base URL used by dev helpers and Textbelt opt-in replies. Textbelt must be able to reach `${WEBHOOK_BASE_URL}/webhook/textbelt/reply`. |
 | `MOCK_EVENT_INTERVAL_MS` | Dev only             | Mock event generator interval. Defaults to `2500`.                                                                                     |
-| `SHARED_SECRET`          | Recommended          | Optional webhook secret checked against the `x-sms-secret` header. Set this in Unraid.                                                 |
+| `SHARED_SECRET`          | Recommended          | Optional webhook secret: `x-sms-secret` header, `Authorization` header, or `?secret=` (see Webhook Secret). Set this in Unraid.        |
 | `NOTIFICATIONS_ENABLED`  | No                   | Defaults to `false`. Must be `true` before any real SMS can be sent.                                                                   |
 | `TEXTBELT_KEY`           | SMS only             | Secret Textbelt API key. Required only when SMS notifications are enabled.                                                             |
 | `TEXTBELT_SENDER`        | No                   | Optional approved Textbelt sender name.                                                                                                |
