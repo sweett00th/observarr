@@ -1,7 +1,13 @@
 import type { Database } from "../db/index.ts";
 import { firstRow } from "../db/index.ts";
-import type { LiveEvent } from "../events/eventBus.ts";
-import { identifyMedia, normalizeSearchText } from "./mediaIdentity.ts";
+import { buildFallbackMessage, fallbackEventTitle, type LiveEvent } from "../events/eventBus.ts";
+import {
+  belongsOnTimeline,
+  identifyMedia,
+  type MediaIdentity,
+  normalizeSearchText,
+  shouldUpdateCanonicalTitle,
+} from "./mediaIdentity.ts";
 
 const retentionDaysAfterAvailable = 14;
 
@@ -92,11 +98,19 @@ export function getMediaTimelineByLiveEventId(
   return row ? getMediaTimeline(db, Number(row[0])) : null;
 }
 
-export function listMediaTimelineEvents(db: Database, mediaItemId: number): MediaTimelineEvent[] {
+/**
+ * `includeRawPayload: false` leaves out the stored webhook bodies, which can run to kilobytes
+ * each.
+ */
+export function listMediaTimelineEvents(
+  db: Database,
+  mediaItemId: number,
+  { includeRawPayload = true }: { includeRawPayload?: boolean } = {},
+): MediaTimelineEvent[] {
   return [...db.query(
     `
     SELECT id, media_item_id, live_event_id, timestamp, source, event_type,
-      severity, title, message, raw_payload, created_at
+      severity, title, message, ${includeRawPayload ? "raw_payload" : "NULL"}, created_at
     FROM media_events
     WHERE media_item_id = ?
     ORDER BY timestamp ASC, id ASC
@@ -106,6 +120,10 @@ export function listMediaTimelineEvents(db: Database, mediaItemId: number): Medi
 }
 
 export function persistMediaEvent(db: Database, event: LiveEvent): MediaTimeline | null {
+  if (!belongsOnTimeline(event.source, event.eventType)) {
+    return null;
+  }
+
   const mediaId = findOrCreateMediaTimeline(db, event);
 
   if (!mediaId) {
@@ -148,7 +166,7 @@ function findOrCreateMediaTimeline(db: Database, event: LiveEvent): number | nul
   const identity = identifyMedia(event);
 
   if (!identity) {
-    return findLooseMediaTimelineMatch(db, event);
+    return findLooseMediaTimelineMatch(db, looseMatchText(event, null));
   }
 
   const exact =
@@ -160,7 +178,11 @@ function findOrCreateMediaTimeline(db: Database, event: LiveEvent): number | nul
     return Number(exact[0]);
   }
 
-  const looseId = findLooseMediaTimelineMatch(db, event, identity.mediaType);
+  const looseId = findLooseMediaTimelineMatch(
+    db,
+    looseMatchText(event, identity),
+    identity.mediaType,
+  );
 
   if (looseId) {
     updateMediaMetadata(db, looseId, event, identity);
@@ -276,42 +298,44 @@ function updateMediaMetadata(
   );
 }
 
-function shouldUpdateCanonicalTitle(
-  currentTitle: string,
-  candidateTitle: string,
-  source: string,
-): boolean {
-  if (!currentTitle) {
-    return true;
+/**
+ * The text a loose match looks for timeline titles in. Never the raw payload: matching against
+ * the full JSON (usernames, URLs, ids, image links, ...) risked false positives whenever a
+ * short/common title ("Her", "It", "Elf", ...) appeared somewhere else in it, misfiling a new event
+ * onto an unrelated title — and notifying whoever was interested in that title. Never the
+ * "Jellyfin event" / "Jellyfin sent ...: Jellyfin event" placeholders either, which name nothing.
+ * For a Jellyfin episode, only the series' name: the episode's own name says nothing about which
+ * timeline it belongs to.
+ */
+function looseMatchText(event: LiveEvent, identity: MediaIdentity | null): string {
+  if (identity && event.source === "jellyfin" && identity.mediaType === "series") {
+    return identity.title;
   }
 
-  if (source === "sabnzbd") {
-    return false;
+  const texts = [identity?.title ?? "", event.entityTitle ?? ""];
+
+  if (event.title !== fallbackEventTitle(event.source)) {
+    texts.push(event.title);
   }
 
-  const noisyPrefixes = ["sabnzbd:", "radarr:", "sonarr:", "jellyfin:", "seerr:"];
-  const normalizedCandidate = candidateTitle.trim().toLowerCase();
-
-  if (noisyPrefixes.some((prefix) => normalizedCandidate.startsWith(prefix))) {
-    return false;
+  if (event.message !== buildFallbackMessage(event.source, event.eventType, event.title)) {
+    texts.push(event.message);
   }
 
-  return normalizeSearchText(currentTitle) !== normalizeSearchText(candidateTitle);
+  return texts.join(" ");
 }
 
 function findLooseMediaTimelineMatch(
   db: Database,
-  event: LiveEvent,
+  text: string,
   mediaType?: string | null,
 ): number | null {
-  // Deliberately excludes the raw payload from the search text. Matching against the full JSON
-  // (usernames, URLs, ids, image links, ...) risked false positives whenever a short/common title
-  // ("Her", "It", "Elf", ...) coincidentally appeared as a substring somewhere else in the
-  // payload, misfiling a brand-new event onto an unrelated pre-existing title — and notifying
-  // whoever was interested in that unrelated title.
-  const haystack = normalizeSearchText(
-    [event.title, event.message, event.entityTitle ?? ""].join(" "),
-  );
+  const haystack = normalizeSearchText(text);
+
+  if (!haystack) {
+    return null;
+  }
+
   const candidates = [...db.query(
     mediaType
       ? "SELECT id, normalized_title FROM media_items WHERE media_type = ? OR media_type IS NULL"
@@ -395,13 +419,15 @@ function isMediaAvailableEvent(event: LiveEvent): boolean {
   return normalizeSearchText(event.eventType).replaceAll(" ", "_") === "media_available";
 }
 
+/** Whole words only: "event" is not in "eleventh", nor "bear" in "bears". */
 function titleAppearsInText(title: string, text: string): boolean {
-  if (text.includes(title)) {
+  if (` ${text} `.includes(` ${title} `)) {
     return true;
   }
 
+  const textWords = new Set(text.split(" "));
   const words = title.split(" ").filter((word) => word.length > 2);
-  return words.length > 0 && words.every((word) => text.includes(word));
+  return words.length > 0 && words.every((word) => textWords.has(word));
 }
 
 function mapMediaTimeline(row: unknown[]): MediaTimeline {

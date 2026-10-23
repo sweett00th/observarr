@@ -8,6 +8,7 @@ import StorageIcon from "@mui/icons-material/Storage";
 import TuneIcon from "@mui/icons-material/Tune";
 import { MessageReceiptsManager } from "./MessageReceiptsManager";
 import {
+  type MediaTimelineFocus,
   NotificationProfilesActions,
   NotificationProfilesManager,
 } from "./NotificationProfilesManager";
@@ -130,8 +131,9 @@ type MediaTimeline = {
   title: string;
   year: string | null;
   thumbnailUrl: string | null;
-  source: string | null;
-  status: string;
+  tmdbId: string | null;
+  sourceFirstSeen: string | null;
+  lifecycleStatus: string;
   eventCount: number;
   firstEventAt: string | null;
   lastEventAt: string | null;
@@ -178,6 +180,7 @@ function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [page, setPage] = useState<"dashboard" | "media-timelines">("dashboard");
   const [selectedMediaTimelineId, setSelectedMediaTimelineId] = useState<number | null>(null);
+  const [mediaTimelineFocus, setMediaTimelineFocus] = useState<MediaTimelineFocus | null>(null);
   const [notificationProfilesOpen, setNotificationProfilesOpen] = useState(false);
   const [messageReceiptsOpen, setMessageReceiptsOpen] = useState(false);
   const [overviewRefreshKey, setOverviewRefreshKey] = useState(0);
@@ -302,7 +305,15 @@ function App() {
   }
 
   function openMediaTimeline(id: number | null) {
+    setMediaTimelineFocus(null);
     setSelectedMediaTimelineId(id);
+    setPage("media-timelines");
+  }
+
+  /** Media Timelines narrowed to one subscribed title, as opened from a profile. */
+  function openFocusedMediaTimeline(focus: MediaTimelineFocus) {
+    setMediaTimelineFocus(focus);
+    setSelectedMediaTimelineId(focus.mediaItemId);
     setPage("media-timelines");
   }
 
@@ -340,7 +351,9 @@ function App() {
           ? (
             <MediaTimelinesPage
               selectedMediaId={selectedMediaTimelineId}
+              focus={mediaTimelineFocus}
               onSelectMedia={setSelectedMediaTimelineId}
+              onClearFocus={() => setMediaTimelineFocus(null)}
               onBack={() => setPage("dashboard")}
             />
           )
@@ -383,9 +396,9 @@ function App() {
             profileCount={overview?.counts.profiles ?? 0}
             onClose={() => setNotificationProfilesOpen(false)}
             onChanged={() => setOverviewRefreshKey((value) => value + 1)}
-            onOpenMediaTimeline={(id) => {
+            onOpenMediaTimeline={(focus) => {
               setNotificationProfilesOpen(false);
-              openMediaTimeline(id);
+              openFocusedMediaTimeline(focus);
             }}
           />
         )}
@@ -740,11 +753,15 @@ function Dashboard({
 
 function MediaTimelinesPage({
   selectedMediaId,
+  focus,
   onSelectMedia,
+  onClearFocus,
   onBack,
 }: {
   selectedMediaId: number | null;
+  focus: MediaTimelineFocus | null;
   onSelectMedia: (id: number | null) => void;
+  onClearFocus: () => void;
   onBack: () => void;
 }) {
   const [items, setItems] = useState<MediaTimeline[]>([]);
@@ -758,23 +775,26 @@ function MediaTimelinesPage({
 
   useEffect(() => {
     let cancelled = false;
+    // Polled every second; an unchanged response must not re-render every card.
+    let lastResponse = "";
 
     function refreshItems() {
       fetch("/api/media-timelines")
-        .then((response) => response.json() as Promise<{ ok: boolean; media: MediaTimeline[] }>)
-        .then((data) => {
-          if (cancelled) {
+        .then((response) => response.text())
+        .then((text) => {
+          if (cancelled || text === lastResponse) {
             return;
           }
 
+          lastResponse = text;
+          const data = JSON.parse(text) as { ok: boolean; media: MediaTimeline[] };
           setItems(data.media);
+          const visible = focus
+            ? data.media.filter((item) => matchesFocus(item, focus))
+            : data.media;
 
-          if (!selectedMediaId && data.media[0]) {
-            onSelectMedia(data.media[0].id);
-          }
-
-          if (selectedMediaId && !data.media.some((item) => item.id === selectedMediaId)) {
-            onSelectMedia(data.media[0]?.id ?? null);
+          if (!selectedMediaId || !visible.some((item) => item.id === selectedMediaId)) {
+            onSelectMedia(visible[0]?.id ?? null);
           }
         })
         .finally(() => {
@@ -791,7 +811,7 @@ function MediaTimelinesPage({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [onSelectMedia, selectedMediaId]);
+  }, [focus, onSelectMedia, selectedMediaId]);
 
   useEffect(() => {
     if (!selectedMediaId) {
@@ -801,18 +821,25 @@ function MediaTimelinesPage({
     }
 
     let cancelled = false;
+    let lastResponse = "";
 
     function refreshSelectedTimeline() {
       fetch(`/api/media-timelines/${selectedMediaId}`)
-        .then((response) =>
-          response.json() as Promise<{
+        .then((response) => response.text())
+        .then((text) => {
+          if (cancelled || text === lastResponse) {
+            return;
+          }
+
+          lastResponse = text;
+          const data = JSON.parse(text) as {
             ok: boolean;
-            media: MediaTimeline;
-            events: MediaTimelineEvent[];
-          }>
-        )
-        .then((data) => {
-          if (!cancelled) {
+            media?: MediaTimeline;
+            events?: MediaTimelineEvent[];
+          };
+
+          // A timeline deleted while selected answers 404 until the list moves the selection.
+          if (data.media && data.events) {
             setSelected(data.media);
             setEvents(data.events);
           }
@@ -828,8 +855,9 @@ function MediaTimelinesPage({
     };
   }, [selectedMediaId]);
 
-  const filteredItems = items.filter((item) =>
-    `${item.title} ${item.mediaType ?? ""} ${item.source ?? ""}`.toLowerCase().includes(
+  const focusedItems = focus ? items.filter((item) => matchesFocus(item, focus)) : items;
+  const filteredItems = focusedItems.filter((item) =>
+    `${item.title} ${item.mediaType ?? ""} ${item.sourceFirstSeen ?? ""}`.toLowerCase().includes(
       search.toLowerCase(),
     )
   );
@@ -914,6 +942,22 @@ function MediaTimelinesPage({
           )
           : (
             <Stack spacing={3}>
+              {focus && (
+                <Alert
+                  severity="info"
+                  action={
+                    <Button color="inherit" size="small" onClick={onClearFocus}>
+                      Show all
+                    </Button>
+                  }
+                >
+                  {focusedItems.length === 0
+                    ? `There's no timeline for ${focus.title} yet.`
+                    : focusedItems.length === 1
+                    ? `Showing the timeline for ${focus.title}.`
+                    : `Showing ${focusedItems.length} timelines for ${focus.title}.`}
+                </Alert>
+              )}
               <Grid container spacing={3}>
                 <Grid item xs={12} md={4}>
                   <Card
@@ -1234,7 +1278,7 @@ function MediaTimelineEventList({
               {media.title}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {media.mediaType ?? "media"} · {media.status} · {events.length} persisted events
+              {media.mediaType ?? "media"} · {media.lifecycleStatus} · {events.length} persisted events
             </Typography>
           </Stack>
 
@@ -1314,84 +1358,68 @@ function MediaTimelineGraph({
   media: MediaTimeline;
   events: MediaTimelineEvent[];
 }) {
+  const [axisRef, axisWidth] = useElementWidth();
+
   if (events.length === 0) {
     return null;
   }
 
   const start = Date.parse(events[0].timestamp);
   const end = Date.parse(events[events.length - 1].timestamp);
-  const axisPaddingPercent = 3;
-  const axisStart = start;
-  const axisEnd = Math.max(end, start + 30000);
-  const axisSpan = axisEnd - axisStart;
-
-  function eventPosition(timestamp: string): number {
-    if (events.length === 1) {
-      return 50;
-    }
-
-    const raw = ((Date.parse(timestamp) - axisStart) / axisSpan) * 100;
-    return axisPaddingPercent + (raw * (100 - axisPaddingPercent * 2)) / 100;
-  }
+  // About one dot per 72px. Labels alternate above and below, so neighbors never overlap.
+  const slotCount = Math.max(4, Math.min(40, Math.floor((axisWidth || 960) / 72)));
+  const clusters = clusterTimelineEvents(events, slotCount);
+  const multiDay = end - start > 24 * 60 * 60 * 1000;
 
   return (
     <Card variant="outlined">
       <CardContent>
         <Stack spacing={2}>
-          <Stack direction="row" alignItems="baseline" spacing={1}>
+          <Stack direction="row" alignItems="baseline" spacing={1} sx={{ flexWrap: "wrap" }}>
             <Typography variant="h6" component="h3">
               Timeline Graph
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {media.title} · end-to-end {formatDuration(Math.max(0, end - start))}
+              {media.title} · {events.length} events · end-to-end{" "}
+              {formatDuration(Math.max(0, end - start))}
             </Typography>
           </Stack>
-          <Box sx={{ position: "relative", height: 210, mx: 1, mt: 2, overflow: "hidden" }}>
+          <Box
+            ref={axisRef}
+            sx={{ position: "relative", height: 210, mx: 1, mt: 2, overflow: "hidden" }}
+          >
             <Box
               sx={{
                 position: "absolute",
-                left: `${axisPaddingPercent}%`,
-                right: `${axisPaddingPercent}%`,
+                left: `${timelineAxisPaddingPercent}%`,
+                right: `${timelineAxisPaddingPercent}%`,
                 top: 62,
                 height: 3,
                 bgcolor: "divider",
               }}
             />
-            {events.map((event, index) => {
-              const percent = eventPosition(event.timestamp);
-              const previous = events[index - 1];
+            {clusters.map((cluster, index) => {
+              const first = cluster.events[0];
+              const previous = clusters[index - 1];
               const gapMs = previous
-                ? Date.parse(event.timestamp) - Date.parse(previous.timestamp)
-                : 0;
+                ? Date.parse(first.timestamp) -
+                  Date.parse(previous.events[previous.events.length - 1].timestamp)
+                : null;
+              const sources = countBy(cluster.events, (event) => event.source);
+              const count = cluster.events.length;
 
               return (
                 <Tooltip
-                  key={event.id}
+                  key={cluster.slot}
                   arrow
-                  title={
-                    <Stack spacing={0.5}>
-                      <Typography variant="caption">
-                        {new Date(event.timestamp).toLocaleString()}
-                      </Typography>
-                      <Typography variant="body2">
-                        {sourceLabels[event.source]} · {event.eventType}
-                      </Typography>
-                      <Typography variant="body2">{event.title}</Typography>
-                      <Typography variant="caption">{event.message}</Typography>
-                      {previous && (
-                        <Typography variant="caption">
-                          Since previous: {formatDuration(gapMs)}
-                        </Typography>
-                      )}
-                    </Stack>
-                  }
+                  title={<TimelineClusterTooltip cluster={cluster} gapMs={gapMs} />}
                 >
                   <Box
                     component="span"
                     sx={{
                       position: "absolute",
-                      left: `${percent}%`,
-                      top: 50,
+                      left: `${cluster.position}%`,
+                      top: count > 1 ? 47 : 50,
                       transform: "translateX(-50%)",
                       display: "flex",
                       flexDirection: "column",
@@ -1401,16 +1429,25 @@ function MediaTimelineGraph({
                   >
                     <Box
                       sx={{
-                        width: 24,
-                        height: 24,
+                        width: count > 1 ? 30 : 24,
+                        height: count > 1 ? 30 : 24,
                         borderRadius: "50%",
-                        bgcolor: sourceColors[event.source] ?? "grey.500",
-                        border: event.severity === "error"
+                        background: clusterBackground(cluster.events),
+                        border: cluster.events.some((event) => event.severity === "error")
                           ? "3px solid #ef4444"
                           : "3px solid white",
                         boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "#fff",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textShadow: "0 1px 2px rgba(0,0,0,0.6)",
                       }}
-                    />
+                    >
+                      {count > 1 ? compactCount(count) : null}
+                    </Box>
                     <Typography
                       variant="caption"
                       sx={{
@@ -1420,13 +1457,20 @@ function MediaTimelineGraph({
                         textAlign: "center",
                       }}
                     >
-                      {sourceLabels[event.source]}
+                      {sources.length === 1
+                        ? sourceLabels[sources[0][0] as EventSourceName] ?? sources[0][0]
+                        : `${sources.length} sources`}
                       <br />
-                      {new Date(event.timestamp).toLocaleTimeString([], {
-                        hour: "numeric",
-                        minute: "2-digit",
-                        second: "2-digit",
-                      })}
+                      {multiDay
+                        ? new Date(first.timestamp).toLocaleDateString([], {
+                          month: "short",
+                          day: "numeric",
+                        })
+                        : new Date(first.timestamp).toLocaleTimeString([], {
+                          hour: "numeric",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })}
                     </Typography>
                   </Box>
                 </Tooltip>
@@ -1456,6 +1500,165 @@ function MediaTimelineGraph({
       </CardContent>
     </Card>
   );
+}
+
+/** One dot on the timeline graph: the events in one slot of the axis. */
+type TimelineCluster = {
+  slot: number;
+  /** Percent from the left edge. */
+  position: number;
+  events: MediaTimelineEvent[];
+};
+
+const timelineAxisPaddingPercent = 3;
+
+/**
+ * Sorts events into `slotCount` evenly spaced slots along the axis (time-proportional, at least
+ * 30s wide), one cluster per occupied slot: thousands of events still draw a few dozen dots.
+ */
+function clusterTimelineEvents(
+  events: MediaTimelineEvent[],
+  slotCount: number,
+): TimelineCluster[] {
+  const start = Date.parse(events[0].timestamp);
+  const span = Math.max(Date.parse(events[events.length - 1].timestamp) - start, 30000);
+  const slotWidth = (100 - timelineAxisPaddingPercent * 2) / slotCount;
+  const clusters = new Map<number, TimelineCluster>();
+
+  for (const event of events) {
+    const slot = events.length === 1
+      ? Math.floor(slotCount / 2)
+      : Math.min(slotCount - 1, Math.floor(((Date.parse(event.timestamp) - start) / span) * slotCount));
+    const cluster = clusters.get(slot) ?? {
+      slot,
+      position: timelineAxisPaddingPercent + (slot + 0.5) * slotWidth,
+      events: [],
+    };
+    cluster.events.push(event);
+    clusters.set(slot, cluster);
+  }
+
+  return [...clusters.values()].sort((left, right) => left.slot - right.slot);
+}
+
+function TimelineClusterTooltip({
+  cluster,
+  gapMs,
+}: {
+  cluster: TimelineCluster;
+  gapMs: number | null;
+}) {
+  const first = cluster.events[0];
+  const last = cluster.events[cluster.events.length - 1];
+  const kinds = countBy(
+    cluster.events,
+    (event) => `${sourceLabels[event.source] ?? event.source} · ${event.eventType}`,
+  );
+
+  return (
+    <Stack spacing={0.5}>
+      <Typography variant="caption">
+        {new Date(first.timestamp).toLocaleString()}
+        {cluster.events.length > 1 && ` – ${new Date(last.timestamp).toLocaleString()}`}
+      </Typography>
+      {cluster.events.length === 1
+        ? (
+          <>
+            <Typography variant="body2">
+              {sourceLabels[first.source]} · {first.eventType}
+            </Typography>
+            <Typography variant="body2">{first.title}</Typography>
+            <Typography variant="caption">{first.message}</Typography>
+          </>
+        )
+        : (
+          <>
+            <Typography variant="body2">{cluster.events.length} events</Typography>
+            {kinds.slice(0, 8).map(([kind, count]) => (
+              <Typography key={kind} variant="caption">
+                {kind} ×{count}
+              </Typography>
+            ))}
+            {kinds.length > 8 && (
+              <Typography variant="caption">and {kinds.length - 8} more kinds</Typography>
+            )}
+          </>
+        )}
+      {gapMs !== null && (
+        <Typography variant="caption">Since previous: {formatDuration(gapMs)}</Typography>
+      )}
+    </Stack>
+  );
+}
+
+/** A dot's fill: its source's color, or a pie of its sources' colors by share of events. */
+function clusterBackground(events: MediaTimelineEvent[]): string {
+  const sources = countBy(events, (event) => event.source);
+
+  if (sources.length === 1) {
+    return sourceColors[sources[0][0] as EventSourceName] ?? "#9e9e9e";
+  }
+
+  let offset = 0;
+  const stops = sources.map(([source, count]) => {
+    const from = offset;
+    offset += (count / events.length) * 100;
+    return `${sourceColors[source as EventSourceName] ?? "#9e9e9e"} ${from}% ${offset}%`;
+  });
+  return `conic-gradient(${stops.join(", ")})`;
+}
+
+/** "7", "999", "1.4k". */
+function compactCount(count: number): string {
+  return count < 1000 ? String(count) : `${Math.round(count / 100) / 10}k`;
+}
+
+/** Counts by key, most frequent first. */
+function countBy<T>(values: T[], key: (value: T) => string): Array<[string, number]> {
+  const counts = new Map<string, number>();
+
+  for (const value of values) {
+    counts.set(key(value), (counts.get(key(value)) ?? 0) + 1);
+  }
+
+  return [...counts.entries()].sort((left, right) => right[1] - left[1]);
+}
+
+/** A callback ref and the element's current rendered width (0 until it mounts). */
+function useElementWidth(): [(element: HTMLElement | null) => void, number] {
+  const [element, setElement] = useState<HTMLElement | null>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    if (!element) {
+      return;
+    }
+
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element]);
+
+  return [setElement, width];
+}
+
+/**
+ * Whether a timeline belongs to the title a subscription points at (see MediaTimelineFocus): the
+ * subscribed timeline itself, or another of the same title. One show can have several, e.g. Seerr's
+ * "The Simpsons (1989)" next to Sonarr's "The Simpsons", and all of them are shown.
+ */
+function matchesFocus(item: MediaTimeline, focus: MediaTimelineFocus): boolean {
+  const sameType = !item.mediaType || !focus.mediaType || item.mediaType === focus.mediaType;
+
+  return item.id === focus.mediaItemId ||
+    (focus.tmdbId !== null && item.tmdbId === focus.tmdbId && sameType) ||
+    (baseTitle(item.title) === baseTitle(focus.title) && sameType);
+}
+
+/** "The Simpsons (1989)" -> "the simpsons". */
+function baseTitle(value: string): string {
+  return value.replace(/\s*\((?:19|20)\d{2}\)\s*$/, "").toLowerCase().replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 const sourceOptions: Array<{ label: string; value: EventSourceName[]; key: string }> = [

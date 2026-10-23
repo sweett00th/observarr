@@ -1,9 +1,17 @@
 import type { DB } from "sqlite";
+import { repairJellyfinTimelines } from "../tracking/timelineRepair.ts";
 
 type Migration = {
   version: number;
   name: string;
-  sql: string;
+  sql?: string;
+  /** Runs after `sql`, in the same transaction, for data repairs SQL alone can't express. */
+  run?: (db: DB) => void;
+  /**
+   * For data repairs, not schema changes: if it fails, it is rolled back and logged, startup
+   * goes on without it, and it is retried on the next start.
+   */
+  bestEffort?: boolean;
 };
 
 const migrations: Migration[] = [
@@ -484,6 +492,19 @@ const migrations: Migration[] = [
         ON profile_external_identities(provider, username);
     `,
   },
+  {
+    version: 10,
+    name: "repair_jellyfin_timelines",
+    bestEffort: true,
+    run: (db) => {
+      const summary = repairJellyfinTimelines(db);
+      console.log(
+        `Repaired media timelines: removed ${summary.eventsRemoved} Jellyfin events that don't ` +
+          `belong on a timeline, re-derived ${summary.timelinesRebuilt} timelines, merged ` +
+          `${summary.timelinesMerged} duplicates, removed ${summary.emptyTimelinesRemoved} empty ones.`,
+      );
+    },
+  },
 ];
 
 export function runMigrations(db: DB): void {
@@ -508,7 +529,10 @@ export function runMigrations(db: DB): void {
 
     try {
       db.execute("BEGIN");
-      db.execute(migration.sql);
+      if (migration.sql) {
+        db.execute(migration.sql);
+      }
+      migration.run?.(db);
       db.query(
         "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
         [migration.version, migration.name, appliedAt],
@@ -517,7 +541,16 @@ export function runMigrations(db: DB): void {
       console.log(`Applied database migration ${migration.version}: ${migration.name}`);
     } catch (error) {
       db.execute("ROLLBACK");
-      throw error;
+
+      if (!migration.bestEffort) {
+        throw error;
+      }
+
+      console.error(
+        `Database repair ${migration.version} (${migration.name}) failed and was rolled back; ` +
+          "starting without it. It will be retried on the next start.",
+        error,
+      );
     }
   }
 }

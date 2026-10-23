@@ -99,6 +99,15 @@ type ProfileMediaInterest = {
   enabled: boolean;
 };
 
+/**
+ * A subscribed title to open Media Timelines on. Its timeline is `mediaItemId` when still linked;
+ * a subscription whose timeline was cleaned up is found again by TMDB id or title.
+ */
+export type MediaTimelineFocus = Pick<
+  ProfileMediaInterest,
+  "mediaItemId" | "title" | "mediaType" | "tmdbId"
+>;
+
 type PhoneReceipt = {
   id: number;
   eventTitle: string | null;
@@ -174,7 +183,7 @@ export function NotificationProfilesManager({
   profileCount: number;
   onClose: () => void;
   onChanged: () => void;
-  onOpenMediaTimeline: (id: number) => void;
+  onOpenMediaTimeline: (media: MediaTimelineFocus) => void;
 }) {
   const [query, setQuery] = useState("");
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
@@ -815,13 +824,16 @@ export function NotificationProfilesManager({
                               }`}
                               color={interest.enabled ? "primary" : "default"}
                               variant={interest.enabled ? "filled" : "outlined"}
-                              clickable={interest.mediaItemId !== null}
-                              onClick={interest.mediaItemId !== null
-                                ? () => {
-                                  onClose();
-                                  onOpenMediaTimeline(interest.mediaItemId!);
-                                }
-                                : undefined}
+                              clickable
+                              onClick={() => {
+                                onClose();
+                                onOpenMediaTimeline({
+                                  mediaItemId: interest.mediaItemId,
+                                  title: interest.title,
+                                  mediaType: interest.mediaType,
+                                  tmdbId: interest.tmdbId,
+                                });
+                              }}
                             />
                           ))}
                         </Stack>

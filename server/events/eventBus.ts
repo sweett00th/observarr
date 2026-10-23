@@ -141,7 +141,7 @@ export function normalizeWebhookEvent(
   ]) || "webhook";
   const title = pickString(data, ["title", "subject", "name", "Name"]) ||
     pickNestedString(data, [["movie", "title"], ["series", "title"], ["episode", "title"]]) ||
-    `${sourceLabel(source)} event`;
+    fallbackEventTitle(source);
   const message = pickString(data, ["message", "description", "body", "text"]) ||
     buildFallbackMessage(source, eventType, title);
   const entityTitle = pickNestedString(data, [["movie", "title"], ["series", "title"]]) ||
@@ -288,7 +288,17 @@ function inferSeverity(eventType: string, message: string): EventSeverity {
   return "info";
 }
 
-function buildFallbackMessage(source: EventSourceName, eventType: string, title: string): string {
+/** The title of an event whose payload names nothing, e.g. "Jellyfin event". */
+export function fallbackEventTitle(source: EventSourceName): string {
+  return `${sourceLabel(source)} event`;
+}
+
+/** The message of an event whose payload has none, e.g. "Jellyfin sent SessionStart: ...". */
+export function buildFallbackMessage(
+  source: EventSourceName,
+  eventType: string,
+  title: string,
+): string {
   return `${sourceLabel(source)} sent ${eventType}: ${title}`;
 }
 
