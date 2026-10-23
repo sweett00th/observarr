@@ -59,7 +59,9 @@ Current durable architecture decisions:
 - Email templates may be stored and previewed, but email transport is not implemented.
 - Imported Jellyfin avatars are cached under `/data/avatars` and served only through authenticated
   profile avatar routes.
-- Webhook routes may use the optional `SHARED_SECRET` header check via `x-sms-secret`.
+- Webhook routes may use the optional `SHARED_SECRET` check. A sender may present it as an
+  `x-sms-secret` header, an `Authorization` header (`Bearer ` optional; Seerr can only set this one),
+  or a `?secret=` query parameter (for senders that only take a URL).
 - Textbelt reply handling is exposed at `POST /webhook/textbelt/reply`; keep it free of
   shared-secret requirements because Textbelt posts directly to it.
 - Do not send SMS opt-in welcome texts automatically. Admins trigger welcome texts per phone number

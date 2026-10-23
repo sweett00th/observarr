@@ -59,7 +59,7 @@ export function createWebhookRoutes(db: Database): Hono {
   webhooks.use("*", async (c, next) => {
     const sharedSecret = getSharedSecret();
 
-    if (sharedSecret && c.req.header("x-sms-secret") !== sharedSecret) {
+    if (sharedSecret && !presentedSecrets(c).includes(sharedSecret)) {
       return c.json(
         {
           ok: false,
@@ -203,6 +203,17 @@ async function readJsonPayload(c: Context): Promise<JsonPayloadResult> {
       },
     };
   }
+}
+
+/**
+ * The webhook secrets a request presents. Senders differ in what they can set: an x-sms-secret
+ * header, an Authorization header (all Seerr offers; "Bearer " is optional), or a `secret` query
+ * parameter for senders that only take a URL.
+ */
+function presentedSecrets(c: Context): string[] {
+  const authorization = c.req.header("authorization")?.trim().replace(/^bearer\s+/i, "");
+  return [c.req.header("x-sms-secret"), authorization, c.req.query("secret")]
+    .filter((secret): secret is string => Boolean(secret));
 }
 
 /** The SteamID64s in a steamreviews event's `watchers`: who may be texted about it. */
