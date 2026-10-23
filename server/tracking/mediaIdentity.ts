@@ -14,16 +14,56 @@ export type MediaIdentity = {
   year: string | null;
 };
 
+/**
+ * Jellyfin notification types that aren't about a piece of media (sign-ins, sessions, users,
+ * plugins, server tasks) or that only bury a timeline (a progress ping every few seconds while
+ * something plays, a user-data save after it). They still reach the Event Console and
+ * notifications, but never a media timeline.
+ */
+export const jellyfinNonTimelineEventTypes = [
+  "authenticationfailure",
+  "authenticationsuccess",
+  "sessionstart",
+  "generic",
+  "pendingrestart",
+  "taskcompleted",
+  "plugininstallationcancelled",
+  "plugininstallationfailed",
+  "plugininstalled",
+  "plugininstalling",
+  "pluginuninstalled",
+  "pluginupdated",
+  "usercreated",
+  "userdeleted",
+  "userlockedout",
+  "userpasswordchanged",
+  "userupdated",
+  "playbackprogress",
+  "userdatasaved",
+];
+
+export function belongsOnTimeline(source: string, eventType: string): boolean {
+  return source !== "jellyfin" ||
+    !jellyfinNonTimelineEventTypes.includes(eventType.toLowerCase().replace(/[^a-z0-9]/g, ""));
+}
+
 export function identifyMedia(event: LiveEvent): MediaIdentity | null {
   const raw = isObject(event.rawPayload) ? event.rawPayload : {};
+  const jellyfinSeries = identifyJellyfinSeries(event, raw);
+
+  if (jellyfinSeries) {
+    return jellyfinSeries;
+  }
+
+  // No fallback to event.title: when a payload names nothing, that is a placeholder ("Jellyfin
+  // event"), and every untitled event would share one timeline under it.
   const title = extractTitleFromDownloadName(raw) ||
     event.entityTitle ||
     pickString(raw, ["title", "subject", "name", "Name"]) ||
     pickNestedString(raw, [["movie", "title"], ["series", "title"], ["episode", "title"], [
       "media",
       "title",
-    ]]) ||
-    (event.source === "sabnzbd" ? null : event.title);
+    ]]);
 
   if (!title || title.trim().length === 0) {
     return null;
@@ -72,6 +112,65 @@ export function identifyMedia(event: LiveEvent): MediaIdentity | null {
     jellyfinSeriesId: jellyfinSeriesId ?? null,
     year: year ?? null,
   };
+}
+
+/**
+ * Jellyfin names an episode or season event after the episode ("Diary of a Chimpy Kid", "Season
+ * 3") and gives that episode's own provider ids, but its timeline is the series'. Identify it as
+ * the series, so the timeline keeps the series' name and is never keyed by an episode's ids.
+ */
+function identifyJellyfinSeries(
+  event: LiveEvent,
+  raw: Record<string, unknown>,
+): MediaIdentity | null {
+  const itemType = pickString(raw, ["ItemType", "itemType"])?.toLowerCase();
+  const seriesName = pickString(raw, ["SeriesName", "seriesName"]);
+
+  if (
+    event.source !== "jellyfin" || (itemType !== "episode" && itemType !== "season") || !seriesName
+  ) {
+    return null;
+  }
+
+  const seriesId = pickString(raw, ["SeriesId", "seriesId"]) ?? null;
+
+  return {
+    mediaKey: seriesId ? `series:${normalizeKey(seriesId)}` : `title:${normalizeKey(seriesName)}`,
+    mediaType: "series",
+    title: seriesName,
+    normalizedTitle: normalizeSearchText(seriesName),
+    tmdbId: null,
+    imdbId: null,
+    tvdbId: null,
+    thumbnailUrl: pickThumbnailUrl(raw),
+    jellyfinItemId: seriesId,
+    jellyfinSeriesId: seriesId,
+    year: null,
+  };
+}
+
+/** Whether an event's title should replace a timeline's current one. */
+export function shouldUpdateCanonicalTitle(
+  currentTitle: string,
+  candidateTitle: string,
+  source: string,
+): boolean {
+  if (!currentTitle) {
+    return true;
+  }
+
+  if (source === "sabnzbd") {
+    return false;
+  }
+
+  const noisyPrefixes = ["sabnzbd:", "radarr:", "sonarr:", "jellyfin:", "seerr:"];
+  const normalizedCandidate = candidateTitle.trim().toLowerCase();
+
+  if (noisyPrefixes.some((prefix) => normalizedCandidate.startsWith(prefix))) {
+    return false;
+  }
+
+  return normalizeSearchText(currentTitle) !== normalizeSearchText(candidateTitle);
 }
 
 function pickThumbnailUrl(data: Record<string, unknown>): string | null {

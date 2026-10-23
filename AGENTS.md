@@ -31,7 +31,10 @@ Current durable architecture decisions:
 - Do not add SSO, OAuth, Auth0, Google login, or any third-party identity provider.
 - The Event Console live buffer is intentionally ephemeral and in-memory only.
 - Media Timelines persist every identifiable media webhook event to SQLite in `media_items` and
-  `media_events`.
+  `media_events`. Jellyfin events that aren't about media (sign-ins, sessions, users, plugins, tasks)
+  and its `PlaybackProgress`/`UserDataSaved` pings never reach a timeline (`belongsOnTimeline`).
+  Jellyfin episode and season events identify as their series (`SeriesName`/`SeriesId`), never by
+  the episode's own name or provider ids.
 - Media timeline cleanup runs on startup and daily. `MEDIA_AVAILABLE` marks lifecycle completion and
   schedules cleanup 14 days later.
 - External services push live events into ObservaRR through webhook endpoints or scripts. Do not

@@ -173,9 +173,9 @@ The Event Console buffer is intentionally ephemeral and in-memory only:
 - Events are lost when the container restarts.
 - The server keeps only a short runtime ring buffer.
 
-Separately, every identifiable media webhook event is persisted to Media Timelines. If an event can
-be associated to a movie or series, the app creates or updates that media item and appends the event
-to its timeline.
+Separately, every identifiable media webhook event is persisted to Media Timelines (see Media
+Timelines for what is left out). If an event can be associated to a movie or series, the app creates
+or updates that media item and appends the event to its timeline.
 
 The default ring buffer keeps events from the last `10` minutes and caps the list at `250` events.
 Override those with:
@@ -199,8 +199,13 @@ authorization headers are recursively redacted. If the sanitized raw payload exc
 
 The dashboard includes a `Media Timelines` widget. Open it to see media items identified from
 webhook events. The page has a searchable media list, a scrollable sorted event list for the
-selected item, and a horizontal timeline graph with source-colored dots. Hover over a dot to see
-event details and the gap from the previous step.
+selected item, and a horizontal timeline graph. The graph groups events into evenly spaced dots, one
+per stretch of time, so even thousands of events stay readable: a dot shows how many events it holds,
+is colored by source (split when it mixes sources), and has a red ring if any of them failed. Hover
+over a dot for its time range, its events by type, and the gap from the previous dot.
+
+Clicking a subscribed title on a notification profile opens Media Timelines narrowed to that
+title's timelines. **Show all** clears the filter.
 
 Media timeline rows can be selected individually or in bulk from the left column and deleted
 manually. Deleting a media item removes its associated timeline events through SQLite cascade
@@ -217,9 +222,20 @@ Timeline persistence is automatic:
 
 Media matching is intentionally loose in this pass. The app first tries derived keys from common
 fields such as `movie.title`, `series.title`, `tmdbId`, `imdbId`, `tvdbId`, `title`, `subject`, and
-media type hints. If that misses, incoming events are compared against existing media titles using
-normalized text from the event title, message, entity title, and sanitized raw payload.
-Source-specific matching can be improved later as real payload samples arrive.
+media type hints. If that misses, incoming events are compared against existing media titles, as
+whole words, in the event's title, message, and entity title. Placeholders such as "Jellyfin event"
+(a payload that names nothing) never create or match a timeline.
+
+Jellyfin specifics:
+
+- Episode and season events belong to their series' timeline, named by `SeriesName` and keyed by
+  `SeriesId`, not to a timeline of their own. The episode's name stays on the event itself.
+- Events that aren't about media (sign-ins, sessions, user and plugin changes, server tasks) and the
+  `PlaybackProgress` and `UserDataSaved` pings sent while something plays appear in the Event
+  Console but never on a timeline.
+- Database migration 10 cleaned up timelines recorded before these rules, once: it removed those
+  events, renamed per-episode timelines after their series, and merged them into the series'
+  existing timeline, subscriptions included.
 
 Media Timelines also stores a thumbnail URL when webhook payloads provide one through common
 poster/image fields such as `posterUrl`, `thumbnailUrl`, `imageUrl`, `movie.remotePoster`,

@@ -156,7 +156,8 @@ export function createMediaTimelineRoutes(db: Database): Hono {
     return c.json({
       ok: true,
       media: item,
-      events: listMediaTimelineEvents(db, id),
+      // The page polls this every second and never shows the raw webhook bodies.
+      events: listMediaTimelineEvents(db, id, { includeRawPayload: false }),
     });
   });
 
