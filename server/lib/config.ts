@@ -147,6 +147,24 @@ export function isJellyfinConfigured(): boolean {
   return Boolean(getJellyfinUrl() && getJellyfinApiKey());
 }
 
+/**
+ * SABnzbd's address, the one its web UI opens at (with its URL base, if it has one), e.g.
+ * http://192.168.1.50:8080. A trailing /api is dropped: the client adds it.
+ */
+export function getSabnzbdUrl(): string | undefined {
+  const value = getEnv("SABNZBD_URL")?.trim().replace(/\/+$/, "").replace(/\/api$/i, "");
+  return value || undefined;
+}
+
+/** SABnzbd's API key (Config > General). Server-side only: never returned or logged. */
+export function getSabnzbdApiKey(): string | undefined {
+  return getEnv("SABNZBD_API_KEY")?.trim();
+}
+
+export function isSabnzbdConfigured(): boolean {
+  return Boolean(getSabnzbdUrl() && getSabnzbdApiKey());
+}
+
 /** steamreviews' LAN address, for importing its Steam users, e.g. http://192.168.1.10:3040. */
 export function getSteamreviewsUrl(): string | undefined {
   let value = getEnv("STEAMREVIEWS_URL");

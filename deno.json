@@ -9,7 +9,8 @@
     "dev:mock": "deno task dev:server & deno task dev:client & deno task mock:events",
     "start": "deno run --env-file=.env --allow-env --allow-net --allow-read=.,/data --allow-write=.,/data server/main.ts",
     "check": "deno check server/main.ts",
-    "fmt": "deno fmt server/**/*.ts deno.json"
+    "test": "deno test --allow-env tests/",
+    "fmt": "deno fmt server/**/*.ts tests/**/*.ts deno.json"
   },
   "imports": {
     "@hono/hono": "jsr:@hono/hono@^4.6.16",

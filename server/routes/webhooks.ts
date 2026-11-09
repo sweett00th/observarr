@@ -18,7 +18,16 @@ const webhookSources: EventSourceName[] = [
   "steamreviews",
 ];
 
-export function createWebhookRoutes(db: Database): Hono {
+export type WebhookHooks = {
+  /**
+   * Sees every parsed Jellyfin webhook payload, before the usual handling. Bandwidth automation
+   * uses it to react to playback right away. It must not throw or wait, and must not change the
+   * payload: the event goes on to the Event Console, timelines and notifications as before.
+   */
+  onJellyfinWebhook?: (payload: unknown) => void;
+};
+
+export function createWebhookRoutes(db: Database, hooks: WebhookHooks = {}): Hono {
   const webhooks = new Hono();
 
   webhooks.post("/textbelt/reply/:token?", async (c) => {
@@ -79,6 +88,17 @@ export function createWebhookRoutes(db: Database): Hono {
 
       if (!payload.ok) {
         return c.json(payload.body, payload.status);
+      }
+
+      if (source === "jellyfin" && hooks.onJellyfinWebhook) {
+        try {
+          hooks.onJellyfinWebhook(payload.value);
+        } catch (error) {
+          console.error(
+            "Jellyfin webhook hook failed",
+            error instanceof Error ? error.message : error,
+          );
+        }
       }
 
       const event = eventBus.publish(normalizeWebhookEvent(source, payload.value));

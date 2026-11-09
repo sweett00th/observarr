@@ -20,6 +20,7 @@ for future use, but email delivery is not implemented.
   preferences, and Jellyfin avatar imports
 - Event templates: global SMS/email templates per source/event with safe `{variableName}` rendering
 - SMS receipts: durable Textbelt submission and delivery-status receipts
+- Bandwidth automation: optional SABnzbd speed cap while Jellyfin is streaming
 - Production: one Docker container
 - Image: `ghcr.io/sweett00th/observarr`
 - Unraid template: `templates/observarr.xml`
@@ -72,6 +73,12 @@ Typecheck the backend:
 
 ```powershell
 deno task check
+```
+
+Run the backend tests (no network needed; Jellyfin and SABnzbd are faked):
+
+```powershell
+deno task test
 ```
 
 Format backend/Deno files:
@@ -130,6 +137,12 @@ npm --prefix client run typecheck
   requires login.
 - `POST /api/integrations/steamreviews/import-users` imports steamreviews' Steam users into
   notification profiles. It requires login.
+- `GET /api/bandwidth-automation` returns bandwidth automation's settings, status and recent
+  errors. It requires login.
+- `PATCH /api/bandwidth-automation/settings` validates and saves bandwidth automation settings,
+  `enabled` included. It requires login.
+- `POST /api/bandwidth-automation/reconcile` checks Jellyfin and SABnzbd now, correcting SABnzbd's
+  speed limit when automation is on. It requires login.
 - `GET /api/event-templates/catalog` returns the canonical template catalog, variables, defaults,
   and current template summaries. It requires login.
 - `GET /api/event-templates` lists global event templates. It requires login.
@@ -203,6 +216,8 @@ EVENT_RAW_MAX_BYTES=20000
 
 External apps still need to be configured to push webhooks into this app. This feature does not poll
 Jellyfin, Jellyseerr/Seerr, Radarr, Sonarr, SABnzbd, or any other app API.
+Bandwidth Automation, below, polls Jellyfin's sessions and SABnzbd's queue for its own use only;
+nothing from it reaches the Event Console.
 
 The console supports source filters for Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, and System/Test.
 Webhook payloads are normalized into compact events. Expanding an event row shows the sanitized raw
@@ -469,6 +484,131 @@ the other one into it:
 
 Receipts moving over keeps the one-text-per-event rule for the linked person.
 
+## Bandwidth Automation
+
+Caps SABnzbd's download speed while anything is playing on Jellyfin, so unrestricted downloads
+don't make streams (transcodes especially) buffer or freeze, and lifts the cap once playback has
+stopped. It is off by default. Turn it on from the **Bandwidth Automation** panel on the
+dashboard.
+
+### Setup
+
+1. Set these on the container (the Unraid template has fields for them) and restart it:
+   - `JELLYFIN_URL` and `JELLYFIN_API_KEY`: the same ones the profile import uses.
+   - `SABNZBD_URL`: SABnzbd's LAN address as its web UI opens, including its URL base if it has
+     one, e.g. `http://192.168.1.50:8080`.
+   - `SABNZBD_API_KEY`: the API key from SABnzbd's **Config > General > Security** (not the NZB
+     key).
+2. Open the dashboard. With automation off, **Reconcile now** only checks Jellyfin and SABnzbd,
+   so use it to see both connect. Adjust the settings, then switch automation on.
+3. Recommended: on the Jellyfin Webhook plugin's ObservaRR destination (`/webhook/jellyfin`),
+   enable **Playback Start**, **Playback Stop** and **Playback Progress**. With them it reacts
+   within about a second instead of at the next poll. Polling works without them and catches any
+   webhook that goes missing.
+
+### How it decides
+
+- A stream counts when a Jellyfin session has something playing: any user, remote family
+  included, and direct play, direct stream and transcodes alike. Sessions that are only connected
+  (browsing, an app left open) never count.
+- Paused streams follow the paused-streams setting below.
+- A playing session that hasn't checked in with Jellyfin for 5 minutes is stale and doesn't
+  count. That is Jellyfin's own threshold for idle playback, and it catches clients that vanished
+  without stopping.
+- One counted stream or more: SABnzbd is capped at the throttled speed. None: the cap stays for
+  the recovery grace period, then comes off entirely. Something starting during the grace period
+  keeps the cap, with nothing written to SABnzbd.
+- If Jellyfin can't be read (down, timing out, rejecting the key), the cap goes on, or stays on.
+  An outage never lifts it. Once Jellyfin answers again with nothing playing, the grace period
+  starts from then.
+- Every check reads Jellyfin's `/Sessions` and SABnzbd's queue. SABnzbd is written to only when its
+  limit should change or has drifted (SABnzbd restarted, someone changed it by hand, another
+  controller set it).
+- Checks run one at a time: polls, webhooks, settings changes and **Reconcile now** queue behind
+  each other, and requests that arrive while one is waiting share it. Webhook-triggered checks are
+  at least a second apart, and Playback Progress pings only trigger one for a new stream or a pause
+  or resume.
+- Each request to Jellyfin or SABnzbd times out after 3 seconds. Timeouts, refused connections and
+  5xx answers are retried twice; a rejected API key isn't.
+- At startup it checks right away, so a restart can't leave SABnzbd wrongly capped or uncapped. If
+  ObservaRR restarts while SABnzbd is capped and nothing is playing, the cap comes off one grace
+  period after startup.
+
+### Settings
+
+| Setting               | Default                  | Range                                             |
+| --------------------- | ------------------------ | ------------------------------------------------- |
+| Enabled               | Off                      |                                                   |
+| Throttled speed       | 80 Mb/s (10 MB/s)        | 1 to 10,000 Mb/s, entered in Mb/s or MB/s         |
+| Polling interval      | 5 s                      | 2 to 300 s                                        |
+| Recovery grace period | 30 s                     | 0 to 3600 s                                       |
+| Paused streams        | Count for a grace period | Count for a grace period, always, or never        |
+| Paused grace period   | 120 s                    | 0 to 3600 s (only for "count for a grace period") |
+
+"Always" keeps the cap for as long as anything is paused, and "never" lifts it as soon as nothing is
+actually playing (after the recovery grace). Settings are kept in SQLite. URLs and keys only ever
+come from the environment.
+
+### Megabits and megabytes
+
+Rates are decimal: 1 Mb/s is 1,000,000 bits/s (125,000 bytes/s) and 1 MB/s is 1,000,000 bytes/s,
+so 80 Mb/s = 10 MB/s. ObservaRR sends SABnzbd the exact byte count. SABnzbd shows speeds in binary
+units that it labels "MB/s" (1 MiB = 1,048,576 bytes), so it displays the default cap as about 9.5
+"MB/s". It's the same limit.
+
+### What it changes in SABnzbd
+
+Only the global speed limit (`mode=config&name=speedlimit`). It never pauses or resumes the queue,
+and never touches jobs, categories, priorities, scripts or post-processing. A paused queue stays
+paused; the limit simply applies when it resumes. "Unrestricted" means no limit at all, not "100%
+of SABnzbd's maximum line speed", which is still a limit and is cleared once when nothing plays.
+
+SABnzbd forgets a limit set through its API when it restarts. ObservaRR notices at the next check
+and sets it again.
+
+While automation is on, ObservaRR owns the speed limit: a change made in SABnzbd (its speed-limit
+control included) is set back at the next check, and the panel says so. To set the limit by hand,
+turn automation off first.
+
+### Turning it off
+
+ObservaRR puts back the limit SABnzbd had before automation first changed it, but only if SABnzbd
+still has the limit ObservaRR last set. If someone changed it since, that deliberate change stays.
+If SABnzbd can't be reached, ObservaRR retries every 30 seconds, and at the next start, until it
+can. If automation never changed anything, nothing is written.
+
+A stopped ObservaRR can't lift a cap. Before removing ObservaRR, or stopping it for good, while
+SABnzbd is capped, turn automation off (SABnzbd would otherwise keep the cap until it restarts).
+
+### Other speed-limit controllers
+
+Only one thing should manage SABnzbd's speed limit. These conflict with bandwidth automation:
+
+- SABnzbd's own scheduler (**Config > Scheduling**) with **Speedlimit** actions;
+- scripts or containers that throttle SABnzbd for Plex, Jellyfin or Tautulli playback;
+- anything else that calls SABnzbd's `speedlimit` API.
+
+Two controllers undo each other's changes at every check. ObservaRR logs each outside change
+(`bandwidth.external_change`), and after 3 within 15 minutes the panel warns that another
+controller is probably active. Turn one of them off. SABnzbd's scheduled pause and resume don't
+conflict, since bandwidth automation never pauses or resumes.
+
+### Status and logs
+
+The panel shows the active stream count and what is playing, SABnzbd's current limit and measured
+download speed, the current decision, whether Jellyfin and SABnzbd answer, the last successful
+reconciliation, the last speed-limit change and recent errors (kept in memory, the latest 20).
+Its logs are JSON lines: `bandwidth.limit_changed`, `bandwidth.mode_changed`,
+`bandwidth.jellyfin_failed` / `bandwidth.jellyfin_recovered`, `bandwidth.sabnzbd_failed` /
+`bandwidth.sabnzbd_recovered`, `bandwidth.external_change`, `bandwidth.conflict_suspected`,
+`bandwidth.settings_saved` and `bandwidth.restore_skipped`.
+
+API keys never appear in logs, the panel, API responses or the database. SABnzbd's key travels in
+the request body rather than the URL, and Jellyfin's in the `Authorization` header.
+
+Bandwidth automation is separate from the Event Console: its polling never feeds the console or
+Media Timelines, and Jellyfin webhooks reach both exactly as before.
+
 ## SQLite Persistence
 
 The app stores local state in one SQLite database file. By default:
@@ -483,7 +623,8 @@ database survives container updates.
 Migrations run automatically on startup and are tracked in `schema_migrations`. Current tables
 include `users`, `sessions`, `message_receipts`, `notification_profiles`,
 `profile_external_identities`, `profile_event_preferences`, `event_templates`, `provider_settings`,
-`webhook_events`, `media_items`, and `media_events`. Legacy placeholder tables
+`webhook_events`, `media_items`, `media_events`, `bandwidth_automation_settings`, and
+`bandwidth_automation_state`. Legacy placeholder tables
 `event_templates_legacy` and `message_receipts_legacy` may exist on upgraded databases. Older
 development tables `tracked_media` and `tracked_media_events` may also exist on upgraded local
 databases.
@@ -580,6 +721,8 @@ docker run --rm -p 3020:3020 `
   -e TEXTBELT_SENDER=ObservaRR `
   -e JELLYFIN_URL=http://jellyfin.local:8096 `
   -e JELLYFIN_API_KEY=replace-with-unraid-secret `
+  -e SABNZBD_URL=http://sabnzbd.local:8080 `
+  -e SABNZBD_API_KEY=replace-with-unraid-secret `
   -v ${PWD}\.data:/data `
   observarr
 ```
@@ -660,9 +803,11 @@ Copy `.env.example` for local reference only. In Unraid, set values through the 
 | `NOTIFICATIONS_ENABLED`  | No                   | Defaults to `false`. Must be `true` before any real SMS can be sent.                                                                   |
 | `TEXTBELT_KEY`           | SMS only             | Secret Textbelt API key. Required only when SMS notifications are enabled.                                                             |
 | `TEXTBELT_SENDER`        | No                   | Optional approved Textbelt sender name.                                                                                                |
-| `JELLYFIN_URL`           | Import only          | Internal Jellyfin base URL used only by the server for profile import.                                                                 |
-| `JELLYFIN_API_KEY`       | Import only          | Secret Jellyfin API key used only by the server for profile import.                                                                    |
-| `STEAMREVIEWS_URL`       | Import only          | steamreviews' LAN address for importing its Steam users. Uses `SHARED_SECRET` (steamreviews' `OBSERVARR_SECRET`).                     |
+| `JELLYFIN_URL`           | Import/bandwidth     | Internal Jellyfin base URL used only by the server, for profile import and bandwidth automation.                                       |
+| `JELLYFIN_API_KEY`       | Import/bandwidth     | Secret Jellyfin API key used only by the server, for profile import and bandwidth automation.                                          |
+| `SABNZBD_URL`            | Bandwidth only       | SABnzbd's LAN address (with its URL base, if any) for bandwidth automation, e.g. `http://192.168.1.50:8080`.                           |
+| `SABNZBD_API_KEY`        | Bandwidth only       | Secret SABnzbd API key, used only by the server to read the queue and set its speed limit. Never returned or logged.                   |
+| `STEAMREVIEWS_URL`       | Import only          | steamreviews' LAN address for importing its Steam users. Uses `SHARED_SECRET` (steamreviews' `OBSERVARR_SECRET`).                      |
 
 Do not commit real secrets. Textbelt keys must never be committed. Twilio is no longer supported.
 Email templates are stored, but email transport is not implemented.

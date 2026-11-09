@@ -505,6 +505,48 @@ const migrations: Migration[] = [
       );
     },
   },
+  {
+    version: 11,
+    name: "bandwidth_automation",
+    // Single rows: the dashboard's nonsecret settings (automation starts off), and the
+    // controller's bookkeeping so a restart knows whether SABnzbd's current limit is its own and
+    // what to put back when automation is turned off. Limits are bytes/s, 0 meaning none.
+    sql: `
+      CREATE TABLE bandwidth_automation_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+        throttle_bytes_per_second INTEGER NOT NULL DEFAULT 10000000
+          CHECK (throttle_bytes_per_second > 0),
+        throttle_unit TEXT NOT NULL DEFAULT 'Mbps' CHECK (throttle_unit IN ('Mbps', 'MBps')),
+        poll_interval_seconds INTEGER NOT NULL DEFAULT 5 CHECK (poll_interval_seconds > 0),
+        recovery_grace_seconds INTEGER NOT NULL DEFAULT 30 CHECK (recovery_grace_seconds >= 0),
+        paused_policy TEXT NOT NULL DEFAULT 'grace'
+          CHECK (paused_policy IN ('grace', 'active', 'idle')),
+        paused_grace_seconds INTEGER NOT NULL DEFAULT 120 CHECK (paused_grace_seconds >= 0),
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO bandwidth_automation_settings (id, updated_at)
+      VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+      CREATE TABLE bandwidth_automation_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        mode TEXT NOT NULL DEFAULT 'unrestricted' CHECK (mode IN ('unrestricted', 'throttled')),
+        owns_limit INTEGER NOT NULL DEFAULT 0 CHECK (owns_limit IN (0, 1)),
+        prior_limit_bytes_per_second INTEGER,
+        applied_limit_bytes_per_second INTEGER,
+        restore_pending INTEGER NOT NULL DEFAULT 0 CHECK (restore_pending IN (0, 1)),
+        last_change_at TEXT,
+        last_change_from_bytes_per_second INTEGER,
+        last_change_to_bytes_per_second INTEGER,
+        last_change_reason TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO bandwidth_automation_state (id, updated_at)
+      VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    `,
+  },
 ];
 
 export function runMigrations(db: DB): void {
