@@ -88,7 +88,8 @@ app.route("/api", createAdminRoutes(db));
 app.route(
   "/webhook",
   createWebhookRoutes(db, {
-    onJellyfinWebhook: (payload) => bandwidthController.handleJellyfinWebhook(payload),
+    onJellyfinWebhook: (payload, context) =>
+      bandwidthController.handleJellyfinWebhook(payload, context),
   }),
 );
 

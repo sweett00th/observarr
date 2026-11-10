@@ -2,14 +2,17 @@ import type { JellyfinSessionSource } from "../integrations/jellyfin/sessions.ts
 import type { SabnzbdApi, SabnzbdQueueStatus } from "../integrations/sabnzbd/client.ts";
 import { redactSecrets, UpstreamRequestError } from "../lib/upstream.ts";
 import {
+  classifyJellyfinWebhook,
   decideMode,
   type DecisionReason,
   evaluatePlayback,
   limitsMatch,
+  type ModeDecision,
   PauseTracker,
   type PlaybackEvaluation,
+  type PlaybackWebhook,
+  sessionStreamKey,
   type SessionVerdict,
-  webhookTriggerReason,
 } from "./policy.ts";
 import {
   applySettingsPatch,
@@ -27,13 +30,17 @@ import { formatLimit, fromBytesPerSecond, type ThrottleUnit } from "./units.ts";
 export type TimerHandle = unknown;
 
 export interface Clock {
+  /** Wall-clock epoch ms, for timestamps and timers. */
   now(): number;
+  /** A monotonic ms counter for measuring durations (performance.now() in production). */
+  monotonic(): number;
   setTimeout(callback: () => void, ms: number): TimerHandle;
   clearTimeout(handle: TimerHandle): void;
 }
 
 export const systemClock: Clock = {
   now: () => Date.now(),
+  monotonic: () => performance.now(),
   setTimeout: (callback, ms) => setTimeout(callback, ms),
   clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
@@ -79,6 +86,50 @@ export type BandwidthControllerOptions = {
   webhookMinIntervalMs?: number;
   /** How often to retry putting SABnzbd's prior limit back when that failed. */
   restoreRetryMs?: number;
+  /**
+   * Whether webhook requests are authenticated (SHARED_SECRET is set, so the webhook route turns
+   * away requests without it). Only then may a webhook write SABnzbd's limit directly.
+   */
+  webhookAuthConfigured?: () => boolean;
+  /** How long a webhook-reported start keeps the cap on before Jellyfin's sessions list it. */
+  webhookEvidenceMs?: number;
+};
+
+/** What the webhook route knows about a Jellyfin webhook request. */
+export type JellyfinWebhookContext = {
+  /** The request passed the SHARED_SECRET check (false when no secret is configured). */
+  authenticated?: boolean;
+  /** When the request arrived, on the controller clock's monotonic scale. */
+  receivedAt?: number;
+};
+
+export type TriggerSource = "webhook" | "poll" | "manual" | "startup" | "settings";
+
+/** The controller's state as the dashboard names it. */
+export type ControllerMode =
+  | "off"
+  | "unrestricted"
+  | "throttled"
+  | "recovery_grace"
+  | "protective_error";
+
+export type WebhookOutcome = "capped" | "already_capped" | "cap_failed" | "check_requested";
+
+/**
+ * Timing of the last webhook that made the fast path write SABnzbd, in ms on a monotonic clock:
+ * from ObservaRR receiving the webhook to the request to SABnzbd, the request itself, and from
+ * receipt to SABnzbd's acknowledgement. It starts when the webhook reached ObservaRR, not when
+ * someone pressed Play: Jellyfin's own delay in sending the webhook isn't included.
+ */
+export type WebhookThrottleTiming = {
+  event: string;
+  receivedAt: string;
+  outcome: "capped" | "cap_failed";
+  receivedToRequestMs: number | null;
+  requestMs: number | null;
+  receivedToAckMs: number | null;
+  /** Receipt to the end of the follow-up reconcile that checked Jellyfin's sessions. */
+  receivedToReconcileMs: number | null;
 };
 
 export type ConnectionState = "unknown" | "ok" | "error" | "not_configured";
@@ -110,7 +161,8 @@ export type BandwidthStatus = {
     throttleUnit: ThrottleUnit;
     /** The cap in throttleUnit. */
     throttleValue: number;
-    pollIntervalSeconds: number;
+    idlePollIntervalSeconds: number;
+    activePollIntervalSeconds: number;
     recoveryGraceSeconds: number;
     pausedPolicy: PausedPolicy;
     pausedGraceSeconds: number;
@@ -119,6 +171,12 @@ export type BandwidthStatus = {
   configured: { jellyfin: boolean; sabnzbd: boolean };
   lifecycle: "stopped" | "running" | "stopping";
   mode: BandwidthMode;
+  controllerMode: ControllerMode;
+  /** Whether a playback-start webhook caps SABnzbd directly (needs SHARED_SECRET). */
+  fastPath: { enabled: boolean; reason: string | null };
+  lastTrigger: { source: TriggerSource; detail: string; at: string } | null;
+  lastWebhook: { event: string; outcome: WebhookOutcome; at: string } | null;
+  lastWebhookThrottle: WebhookThrottleTiming | null;
   decision: {
     reason: DecisionReason | "disabled" | null;
     graceUntil: string | null;
@@ -133,6 +191,8 @@ export type BandwidthStatus = {
     stale: number;
     transcoding: number;
     totalSessions: number;
+    /** Starts reported by webhooks that Jellyfin's sessions don't list yet; they count too. */
+    pendingWebhookStreams: number;
     streams: Array<{
       userName: string | null;
       client: string | null;
@@ -194,16 +254,57 @@ const externalChangeWindowMs = 15 * 60_000;
 const externalChangeThreshold = 3;
 const maxRecentErrors = 20;
 const minimumPollDelayMs = 250;
+/** Long enough for Jellyfin's /Sessions to list a stream its webhook reported. */
+const defaultWebhookEvidenceMs = 60_000;
+
+/** A mutex whose "high" waiters are let in before "normal" ones. */
+class PriorityLock {
+  #busy = false;
+  readonly #high: Array<() => void> = [];
+  readonly #normal: Array<() => void> = [];
+
+  async run<T>(priority: "high" | "normal", task: () => Promise<T>): Promise<T> {
+    if (this.#busy) {
+      await new Promise<void>((resolve) => {
+        (priority === "high" ? this.#high : this.#normal).push(resolve);
+      });
+    } else {
+      this.#busy = true;
+    }
+
+    try {
+      return await task();
+    } finally {
+      const next = this.#high.shift() ?? this.#normal.shift();
+      if (next) {
+        next(); // the lock passes straight to the next waiter
+      } else {
+        this.#busy = false;
+      }
+    }
+  }
+}
 
 /**
  * Caps SABnzbd's download speed while anything plays on Jellyfin.
  *
- * Every operation (polls, webhook-triggered checks, manual checks, settings changes) runs through
- * one queue, so two never overlap, and a check asked for while another waits joins it. While
- * enabled it owns SABnzbd's speed limit: SABnzbd is only written to when the wanted limit changes
- * or SABnzbd drifted from it (a SABnzbd restart, a change by hand, another controller). The limit
- * SABnzbd had before automation first changed it is remembered and put back when automation is
- * turned off, unless someone changed the limit since.
+ * Event first: an authenticated playback-start (or resume) webhook writes the cap at once,
+ * without asking Jellyfin or reading SABnzbd first, and a reconcile then checks Jellyfin's
+ * sessions. Stops and pauses only ever trigger that check; the cap comes off after the recovery
+ * grace, once Jellyfin confirms nothing is playing. Polling (a short interval while idle, a long
+ * one while capped) is the safety net for missed webhooks, stale sessions and outside changes.
+ *
+ * Reconciles, settings changes and restores run through one queue, so two never overlap, and a
+ * check asked for while another waits joins it. Every SABnzbd write goes through one lock that
+ * playback starts jump to the front of, so a start never waits behind a slow Jellyfin request and
+ * two writes never overlap. A webhook-reported start bumps an activity generation: a reconcile
+ * whose Jellyfin read began before it can't start the grace period or lift the cap, and the start
+ * itself counts as a stream until Jellyfin lists it (or for webhookEvidenceMs).
+ *
+ * While enabled it owns SABnzbd's speed limit: SABnzbd is only written to when the wanted limit
+ * changes or SABnzbd drifted from it (a SABnzbd restart, a change by hand, another controller).
+ * The limit SABnzbd had before automation first changed it is remembered and put back when
+ * automation is turned off, unless someone changed the limit since.
  */
 export class BandwidthController {
   readonly #store: BandwidthStore;
@@ -214,6 +315,20 @@ export class BandwidthController {
   readonly #secrets: ReadonlyArray<string | undefined>;
   readonly #webhookMinIntervalMs: number;
   readonly #restoreRetryMs: number;
+  readonly #webhookAuthConfigured: () => boolean;
+  readonly #webhookEvidenceMs: number;
+  /** One SABnzbd write (with any read it needs first) at a time; playback starts go first. */
+  readonly #writeLock = new PriorityLock();
+  /** Bumped by every webhook-reported start or resume; see #reconcile. */
+  #activityGeneration = 0;
+  /** What webhooks said about each stream (keyed like sessionStreamKey): when, and paused or not. */
+  readonly #webhookStreams = new Map<string, { at: number; paused: boolean }>();
+  readonly #fastPathTasks = new Set<Promise<void>>();
+  #lastTrigger: { source: TriggerSource; detail: string; at: number } | null = null;
+  #lastWebhook: { event: string; outcome: WebhookOutcome; at: number } | null = null;
+  #lastWebhookThrottle: WebhookThrottleTiming | null = null;
+  /** A fast-path write whose follow-up reconcile hasn't finished yet. */
+  #awaitingCheck: { timing: WebhookThrottleTiming; receivedAt: number } | null = null;
 
   #settings: BandwidthSettings;
   #state: BandwidthControllerState;
@@ -234,7 +349,7 @@ export class BandwidthController {
   #decisionReason: DecisionReason | null = null;
   readonly #pauseTracker = new PauseTracker();
   #playback: { at: number; evaluation: PlaybackEvaluation } | null = null;
-  /** DeviceId -> IsPaused for each stream in the last successful Jellyfin check. */
+  /** Stream key -> IsPaused for each stream in the last successful Jellyfin check. */
   #knownStreams: Map<string, boolean> | null = null;
   #queue: { at: number; status: SabnzbdQueueStatus } | null = null;
   #jellyfinStatus: ConnectionStatus;
@@ -256,6 +371,8 @@ export class BandwidthController {
     this.#secrets = options.secrets ?? [];
     this.#webhookMinIntervalMs = options.webhookMinIntervalMs ?? 1000;
     this.#restoreRetryMs = options.restoreRetryMs ?? 30_000;
+    this.#webhookAuthConfigured = options.webhookAuthConfigured ?? (() => false);
+    this.#webhookEvidenceMs = options.webhookEvidenceMs ?? defaultWebhookEvidenceMs;
     this.#settings = this.#store.getSettings();
     this.#state = this.#store.getState();
     this.#jellyfinStatus = initialConnectionStatus(this.#jellyfin !== null);
@@ -302,10 +419,10 @@ export class BandwidthController {
     await this.whenIdle();
   }
 
-  /** Resolves once no operation is queued or running. */
+  /** Resolves once no operation is queued or running, fast-path writes included. */
   async whenIdle(): Promise<void> {
-    while (this.#inFlight > 0) {
-      await this.#chain;
+    while (this.#inFlight > 0 || this.#fastPathTasks.size > 0) {
+      await Promise.allSettled([this.#chain, ...this.#fastPathTasks]);
     }
   }
 
@@ -340,20 +457,45 @@ export class BandwidthController {
   }
 
   /**
-   * Called for every Jellyfin webhook, after its payload parsed. Playback starts, stops and pause
-   * changes trigger a reconcile right away; everything else is ignored. Never throws and never
-   * waits: the webhook's own handling goes on unchanged.
+   * Called for every Jellyfin webhook once its payload parsed. Never throws and never waits: the
+   * webhook's own handling goes on unchanged.
+   *
+   * A playback start or resume that passed the SHARED_SECRET check caps SABnzbd at once (the fast
+   * path), then a reconcile checks Jellyfin's sessions. Stops and pauses, and every event when no
+   * secret is configured, only trigger that reconcile, which asks Jellyfin before changing
+   * anything. Progress pings that change nothing, other events and malformed payloads are
+   * ignored, without a log line.
    */
-  handleJellyfinWebhook(payload: unknown): void {
+  handleJellyfinWebhook(payload: unknown, context: JellyfinWebhookContext = {}): void {
     try {
       if (this.#lifecycle !== "running" || !this.#settings.enabled) {
         return;
       }
 
-      const reason = webhookTriggerReason(payload, this.#knownStreams);
-      if (reason) {
-        this.#scheduleWebhookReconcile(`webhook:${reason}`);
+      const receivedAt = context.receivedAt ?? this.#clock.monotonic();
+      const event = classifyJellyfinWebhook(payload, this.#knownStreamStates());
+      if (!event) {
+        return;
       }
+
+      const authenticated = context.authenticated === true && this.#webhookAuthConfigured();
+      if (authenticated) {
+        this.#noteWebhookStream(event);
+      }
+
+      if (authenticated && (event.kind === "start" || event.kind === "resume")) {
+        this.#playbackStarted(event, receivedAt);
+        return;
+      }
+
+      this.#recordWebhook(event.label, "check_requested");
+      this.#log("info", "bandwidth.webhook", {
+        notification: event.label,
+        kind: event.kind,
+        authenticated,
+        outcome: "check_requested",
+      });
+      this.#scheduleWebhookReconcile(`webhook:${event.label}`);
     } catch (error) {
       this.#recordError("controller", error);
     }
@@ -416,7 +558,8 @@ export class BandwidthController {
         throttleValue: Number(
           fromBytesPerSecond(settings.throttleBytesPerSecond, settings.throttleUnit).toFixed(3),
         ),
-        pollIntervalSeconds: settings.pollIntervalSeconds,
+        idlePollIntervalSeconds: settings.idlePollIntervalSeconds,
+        activePollIntervalSeconds: settings.activePollIntervalSeconds,
         recoveryGraceSeconds: settings.recoveryGraceSeconds,
         pausedPolicy: settings.pausedPolicy,
         pausedGraceSeconds: settings.pausedGraceSeconds,
@@ -425,6 +568,20 @@ export class BandwidthController {
       configured: { jellyfin: this.#jellyfin !== null, sabnzbd: this.#sabnzbd !== null },
       lifecycle: this.#lifecycle,
       mode: this.#state.mode,
+      controllerMode: this.#controllerMode(),
+      fastPath: this.#webhookAuthConfigured() ? { enabled: true, reason: null } : {
+        enabled: false,
+        reason:
+          "SHARED_SECRET isn't set, so webhooks can't be trusted to change SABnzbd directly: " +
+          "they only trigger a check of Jellyfin's sessions.",
+      },
+      lastTrigger: this.#lastTrigger
+        ? { ...this.#lastTrigger, at: iso(this.#lastTrigger.at) }
+        : null,
+      lastWebhook: this.#lastWebhook
+        ? { ...this.#lastWebhook, at: iso(this.#lastWebhook.at) }
+        : null,
+      lastWebhookThrottle: this.#lastWebhookThrottle ? { ...this.#lastWebhookThrottle } : null,
       decision: {
         reason: settings.enabled ? this.#decisionReason : "disabled",
         graceUntil: isoOrNull(this.#graceUntil),
@@ -440,6 +597,7 @@ export class BandwidthController {
           stale: playback.evaluation.stale,
           transcoding: playback.evaluation.transcoding,
           totalSessions: playback.evaluation.totalSessions,
+          pendingWebhookStreams: this.#pendingWebhookStreams(playback.evaluation, now, false),
           streams: playback.evaluation.sessions.map(({ session, verdict, counted }) => ({
             userName: session.userName,
             client: session.client,
@@ -512,6 +670,11 @@ export class BandwidthController {
       return this.#skippedOutcome(trigger);
     }
 
+    this.#lastTrigger = { source: triggerSource(triggers), detail: trigger, at: this.#clock.now() };
+    // A fast-path write asked for this reconcile (or one queued behind it): time it too.
+    const awaiting = this.#awaitingCheck;
+    this.#awaitingCheck = null;
+
     try {
       return this.#settings.enabled ? await this.#reconcile(trigger) : await this.#check(trigger);
     } catch (error) {
@@ -527,6 +690,11 @@ export class BandwidthController {
         change: null,
       });
     } finally {
+      if (awaiting) {
+        awaiting.timing.receivedToReconcileMs = roundMs(
+          this.#clock.monotonic() - awaiting.receivedAt,
+        );
+      }
       this.#scheduleNextPoll();
     }
   }
@@ -554,18 +722,63 @@ export class BandwidthController {
       });
     }
 
-    // 1. What is playing.
-    const evaluation = await this.#observeJellyfin(jellyfin, settings);
+    // A start reported while Jellyfin is being read can't be in its answer: see the lock below.
+    const generation = this.#activityGeneration;
 
+    // 1. What is playing: Jellyfin's sessions, plus starts webhooks reported that it doesn't
+    //    list yet.
+    const evaluation = await this.#observeJellyfin(jellyfin, settings);
+    const countedStreams = evaluation === null ? null : evaluation.countedStreams +
+      this.#pendingWebhookStreams(evaluation, this.#clock.now(), true);
+
+    // 2 and 3 hold the SABnzbd lock, so a fast-path write can't land between reading SABnzbd's
+    // limit and correcting it. SABnzbd is read before deciding, so the decision (and the
+    // generation check) come after the last wait and right before any write.
+    return await this.#writeLock.run("normal", async () => {
+      const queue = await this.#observeSabnzbd(sabnzbd);
+      let decision = decideMode({
+        previousMode: this.#state.mode,
+        countedStreams,
+        now: this.#clock.now(),
+        inactiveSince: this.#inactiveSince,
+        recoveryGraceMs: settings.recoveryGraceSeconds * 1000,
+      });
+
+      if (countedStreams === 0 && this.#activityGeneration !== generation) {
+        // A playback start arrived after this read began, so the read can't show it: it
+        // mustn't start the grace period or lift the cap.
+        decision = {
+          mode: "throttled",
+          reason: "playback_started",
+          inactiveSince: null,
+          graceUntil: null,
+        };
+      }
+
+      return await this.#applyDecision(
+        trigger,
+        settings,
+        sabnzbd,
+        queue,
+        evaluation !== null,
+        countedStreams,
+        decision,
+      );
+    });
+  }
+
+  /** Steps 2 and 3 of a reconcile: record the decision, then correct SABnzbd if it differs. */
+  async #applyDecision(
+    trigger: string,
+    settings: BandwidthSettings,
+    sabnzbd: SabnzbdApi,
+    queue: SabnzbdQueueStatus | null,
+    jellyfinRead: boolean,
+    countedStreams: number | null,
+    decision: ModeDecision,
+  ): Promise<ReconcileOutcome> {
     // 2. What SABnzbd's limit should be.
     const previous = this.#state;
-    const decision = decideMode({
-      previousMode: previous.mode,
-      countedStreams: evaluation?.countedStreams ?? null,
-      now: this.#clock.now(),
-      inactiveSince: this.#inactiveSince,
-      recoveryGraceMs: settings.recoveryGraceSeconds * 1000,
-    });
     this.#inactiveSince = decision.inactiveSince;
     this.#graceUntil = decision.graceUntil;
     this.#decisionReason = decision.reason;
@@ -576,12 +789,11 @@ export class BandwidthController {
         from: previous.mode,
         to: decision.mode,
         reason: decision.reason,
-        countedStreams: evaluation?.countedStreams ?? null,
+        countedStreams,
       });
     }
 
-    // 3. What SABnzbd has, and a write only if that differs.
-    const queue = await this.#observeSabnzbd(sabnzbd);
+    // 3. What SABnzbd has (read just before deciding), and a write only if that differs.
     let applied = queue !== null;
     let change: ReconcileOutcome["change"] = null;
 
@@ -632,7 +844,7 @@ export class BandwidthController {
             from: formatLimit(actual),
             to: formatLimit(desired),
             reason: decision.reason,
-            countedStreams: evaluation?.countedStreams ?? null,
+            countedStreams,
           });
 
           if (changedOutside) {
@@ -655,10 +867,10 @@ export class BandwidthController {
     return this.#finish({
       trigger,
       checkOnly: false,
-      success: evaluation !== null && queue !== null && applied,
+      success: jellyfinRead && queue !== null && applied,
       mode: decision.mode,
       reason: decision.reason,
-      countedStreams: evaluation?.countedStreams ?? null,
+      countedStreams,
       change,
     });
   }
@@ -702,9 +914,7 @@ export class BandwidthController {
       );
       this.#playback = { at: now, evaluation };
       this.#knownStreams = new Map(
-        snapshot.playing
-          .filter((session) => session.deviceId !== null)
-          .map((session) => [session.deviceId as string, session.isPaused]),
+        snapshot.playing.map((session) => [sessionStreamKey(session), session.isPaused]),
       );
       this.#markSuccess("jellyfin", now);
       return evaluation;
@@ -729,9 +939,14 @@ export class BandwidthController {
 
   /**
    * Puts back the limit SABnzbd had before automation first changed it, if SABnzbd still has the
-   * one automation last set. A different limit is someone's deliberate change and stays.
+   * one automation last set. A different limit is someone's deliberate change and stays. Holds
+   * the SABnzbd lock, so a playback start that raced turning automation off can't interleave.
    */
-  async #restorePriorLimit(): Promise<void> {
+  #restorePriorLimit(): Promise<void> {
+    return this.#writeLock.run("normal", () => this.#restorePriorLimitLocked());
+  }
+
+  async #restorePriorLimitLocked(): Promise<void> {
     const state = this.#state;
 
     if (!state.ownsLimit) {
@@ -876,8 +1091,11 @@ export class BandwidthController {
   }
 
   /**
-   * The next poll: the poll interval after this reconcile, or sooner when the grace period ends
-   * or a paused or stale stream stops counting before then.
+   * The next poll. Polling is the safety net, so it is adaptive: the active interval while
+   * capped (webhooks report playback ending, polls only catch a missed one), the idle interval
+   * while unrestricted and while the last check failed (Jellyfin unreadable, SABnzbd not
+   * answering). Sooner when the grace period ends, a paused or stale stream stops counting, or a
+   * webhook-reported start Jellyfin never listed runs out.
    */
   #scheduleNextPoll(): void {
     this.#clearPollTimer();
@@ -887,9 +1105,20 @@ export class BandwidthController {
     }
 
     const now = this.#clock.now();
-    let delay = this.#settings.pollIntervalSeconds * 1000;
+    const failing = this.#decisionReason === "jellyfin_unavailable" ||
+      this.#lastReconcile?.success === false;
+    const intervalSeconds = this.#state.mode === "throttled" && !failing
+      ? this.#settings.activePollIntervalSeconds
+      : this.#settings.idlePollIntervalSeconds;
+    let delay = intervalSeconds * 1000;
 
-    for (const at of [this.#graceUntil, this.#playback?.evaluation.nextChangeAt ?? null]) {
+    for (
+      const at of [
+        this.#graceUntil,
+        this.#playback?.evaluation.nextChangeAt ?? null,
+        this.#nextEvidenceExpiry(),
+      ]
+    ) {
       if (at !== null && at > now) {
         delay = Math.min(delay, at - now);
       }
@@ -933,6 +1162,215 @@ export class BandwidthController {
     this.#graceUntil = null;
     this.#decisionReason = null;
     this.#pauseTracker.clear();
+    this.#webhookStreams.clear();
+    this.#awaitingCheck = null;
+  }
+
+  /** Stream key -> IsPaused: the last Jellyfin check, updated by webhooks since. */
+  #knownStreamStates(): Map<string, boolean> {
+    const known = new Map(this.#knownStreams ?? []);
+    for (const [key, entry] of this.#webhookStreams) {
+      known.set(key, entry.paused);
+    }
+    return known;
+  }
+
+  /** Remembers what an authenticated webhook said about a stream. */
+  #noteWebhookStream(event: PlaybackWebhook): void {
+    if (event.kind === "stop") {
+      this.#webhookStreams.delete(event.streamKey);
+    } else {
+      this.#webhookStreams.set(event.streamKey, {
+        at: this.#clock.now(),
+        paused: event.kind === "pause",
+      });
+    }
+  }
+
+  /**
+   * Webhook-reported streams Jellyfin's sessions don't list (yet) and that aren't paused, within
+   * the evidence window: each counts as a stream. With `prune`, entries Jellyfin now lists, or
+   * whose window passed, are dropped: from then on Jellyfin's sessions alone decide.
+   */
+  #pendingWebhookStreams(evaluation: PlaybackEvaluation, now: number, prune: boolean): number {
+    const listed = new Set(evaluation.sessions.map(({ session }) => sessionStreamKey(session)));
+    let pending = 0;
+
+    for (const [key, entry] of this.#webhookStreams) {
+      if (listed.has(key) || now - entry.at >= this.#webhookEvidenceMs) {
+        if (prune) {
+          this.#webhookStreams.delete(key);
+        }
+        continue;
+      }
+
+      if (!entry.paused) {
+        pending += 1;
+      }
+    }
+
+    return pending;
+  }
+
+  /** When the soonest webhook-reported start stops counting unless Jellyfin lists it. */
+  #nextEvidenceExpiry(): number | null {
+    let soonest: number | null = null;
+    for (const entry of this.#webhookStreams.values()) {
+      if (!entry.paused) {
+        const at = entry.at + this.#webhookEvidenceMs;
+        soonest = soonest === null ? at : Math.min(soonest, at);
+      }
+    }
+    return soonest;
+  }
+
+  /** The fast path: playback started or resumed, according to an authenticated webhook. */
+  #playbackStarted(event: PlaybackWebhook, receivedAt: number): void {
+    this.#activityGeneration += 1;
+    // Playback is back, so no grace period is counting down any more.
+    this.#inactiveSince = null;
+    this.#graceUntil = null;
+    this.#decisionReason = "playback_started";
+    this.#lastTrigger = { source: "webhook", detail: event.label, at: this.#clock.now() };
+
+    const task: Promise<void> = this.#throttleNow(event, receivedAt)
+      .catch((error) => this.#recordError("controller", error))
+      .finally(() => this.#fastPathTasks.delete(task));
+    this.#fastPathTasks.add(task);
+  }
+
+  /**
+   * Writes the cap now, ahead of any queued reconcile: no Jellyfin request, and no SABnzbd read
+   * either, unless SABnzbd hasn't answered since startup and automation doesn't own its limit
+   * yet (then one read, to know which limit to put back when automation is turned off).
+   * Duplicate starts write nothing. A reconcile then checks Jellyfin's sessions; it can't lift
+   * the cap this start set (see #reconcile).
+   */
+  async #throttleNow(event: PlaybackWebhook, receivedAt: number): Promise<void> {
+    const sabnzbd = this.#sabnzbd;
+    const outcome = await this.#writeLock.run("high", async (): Promise<WebhookOutcome | null> => {
+      if (this.#lifecycle !== "running" || !this.#settings.enabled || !sabnzbd) {
+        return null;
+      }
+
+      const desired = this.#settings.throttleBytesPerSecond;
+      let state: BandwidthControllerState = { ...this.#state, mode: "throttled" };
+      let current = state.ownsLimit
+        ? state.appliedLimitBytesPerSecond
+        : this.#queue?.status.speedLimitBytesPerSecond ?? null;
+
+      if (!state.ownsLimit && current === null) {
+        current = (await this.#observeSabnzbd(sabnzbd))?.speedLimitBytesPerSecond ?? null;
+      }
+
+      if (current !== null && limitsMatch(current, desired)) {
+        this.#saveState(state);
+        return "already_capped";
+      }
+
+      if (!state.ownsLimit) {
+        state = {
+          ...state,
+          ownsLimit: true,
+          priorLimitBytesPerSecond: current,
+          appliedLimitBytesPerSecond: null,
+        };
+      }
+
+      // Kept before writing, so a crash mid-write still knows what to put back.
+      this.#saveState(state);
+
+      const requestAt = this.#clock.monotonic();
+      const timing: WebhookThrottleTiming = {
+        event: event.label,
+        receivedAt: iso(this.#clock.now() - (requestAt - receivedAt)),
+        outcome: "cap_failed",
+        receivedToRequestMs: roundMs(requestAt - receivedAt),
+        requestMs: null,
+        receivedToAckMs: null,
+        receivedToReconcileMs: null,
+      };
+      this.#lastWebhookThrottle = timing;
+      this.#awaitingCheck = { timing, receivedAt };
+
+      try {
+        await sabnzbd.setSpeedLimit(desired);
+      } catch (error) {
+        // Nothing on record changes: the follow-up reconcile and the polls retry the write.
+        this.#markFailure("sabnzbd", error);
+        return "cap_failed";
+      }
+
+      const ackAt = this.#clock.monotonic();
+      timing.outcome = "capped";
+      timing.requestMs = roundMs(ackAt - requestAt);
+      timing.receivedToAckMs = roundMs(ackAt - receivedAt);
+      const at = this.#clock.now();
+      this.#saveState({
+        ...state,
+        appliedLimitBytesPerSecond: desired,
+        lastChange: {
+          at: iso(at),
+          fromBytesPerSecond: current,
+          toBytesPerSecond: desired,
+          reason: describeChangeReason("playback_started", false),
+        },
+      });
+      if (this.#queue) {
+        this.#queue = { at, status: { ...this.#queue.status, speedLimitBytesPerSecond: desired } };
+      }
+      this.#markSuccess("sabnzbd", at);
+      this.#log("info", "bandwidth.limit_changed", {
+        trigger: `webhook:${event.label}`,
+        from: formatLimit(current),
+        to: formatLimit(desired),
+        reason: "playback_started",
+        receivedToAckMs: timing.receivedToAckMs,
+      });
+      return "capped";
+    });
+
+    if (outcome === null) {
+      return;
+    }
+
+    this.#recordWebhook(event.label, outcome);
+    if (!this.#settings.enabled) {
+      return; // turned off while the cap was being written; the restore took it from there
+    }
+    const timing = this.#lastWebhookThrottle;
+    this.#log(outcome === "cap_failed" ? "warn" : "info", "bandwidth.webhook", {
+      notification: event.label,
+      kind: event.kind,
+      authenticated: true,
+      outcome,
+      ...(outcome === "already_capped" || !timing ? {} : {
+        receivedToRequestMs: timing.receivedToRequestMs,
+        requestMs: timing.requestMs,
+        receivedToAckMs: timing.receivedToAckMs,
+      }),
+    });
+    this.#scheduleWebhookReconcile(`webhook:${event.label}`);
+  }
+
+  #recordWebhook(event: string, outcome: WebhookOutcome): void {
+    this.#lastWebhook = { event, outcome, at: this.#clock.now() };
+  }
+
+  #controllerMode(): ControllerMode {
+    if (!this.#settings.enabled) {
+      return "off";
+    }
+    if (this.#state.mode === "unrestricted") {
+      return "unrestricted";
+    }
+    if (this.#decisionReason === "grace_period") {
+      return "recovery_grace";
+    }
+    if (this.#decisionReason === "jellyfin_unavailable") {
+      return "protective_error";
+    }
+    return "throttled";
   }
 
   #saveState(next: BandwidthControllerState): void {
@@ -1103,6 +1541,7 @@ function releasedState(state: BandwidthControllerState): BandwidthControllerStat
 function describeChangeReason(reason: DecisionReason, changedOutside: boolean): string {
   const base = {
     streams_active: "Jellyfin playback: cap applied",
+    playback_started: "Jellyfin playback started (webhook): cap applied",
     grace_period: "Recovery grace period: cap kept",
     idle: "No Jellyfin playback: cap removed",
     jellyfin_unavailable: "Jellyfin unreachable: protective cap applied",
@@ -1114,11 +1553,26 @@ function describeSettings(settings: BandwidthSettings): Record<string, unknown> 
   return {
     enabled: settings.enabled,
     throttle: formatLimit(settings.throttleBytesPerSecond),
-    pollIntervalSeconds: settings.pollIntervalSeconds,
+    idlePollIntervalSeconds: settings.idlePollIntervalSeconds,
+    activePollIntervalSeconds: settings.activePollIntervalSeconds,
     recoveryGraceSeconds: settings.recoveryGraceSeconds,
     pausedPolicy: settings.pausedPolicy,
     pausedGraceSeconds: settings.pausedGraceSeconds,
   };
+}
+
+/** What started a reconcile, for the dashboard; a shared run counts as its most telling cause. */
+function triggerSource(triggers: readonly string[]): TriggerSource {
+  if (triggers.includes("manual")) return "manual";
+  if (triggers.some((trigger) => trigger.startsWith("webhook"))) return "webhook";
+  if (triggers.includes("startup")) return "startup";
+  if (triggers.includes("settings") || triggers.includes("enabled")) return "settings";
+  return "poll";
+}
+
+/** Milliseconds to 0.1 ms. */
+function roundMs(ms: number): number {
+  return Math.round(ms * 10) / 10;
 }
 
 function initialConnectionStatus(configured: boolean): ConnectionStatus {

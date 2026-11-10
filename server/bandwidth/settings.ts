@@ -21,7 +21,13 @@ export type BandwidthSettings = {
   throttleBytesPerSecond: number;
   /** The unit the cap was entered in, for showing it back the same way. */
   throttleUnit: ThrottleUnit;
-  pollIntervalSeconds: number;
+  /**
+   * How often Jellyfin is checked while nothing plays (and while Jellyfin or SABnzbd fails).
+   * Webhooks catch playback starting at once; this catches a missed one.
+   */
+  idlePollIntervalSeconds: number;
+  /** How often Jellyfin is checked while capped, to notice playback ending without a webhook. */
+  activePollIntervalSeconds: number;
   /** How long no stream must be playing before the cap comes off. */
   recoveryGraceSeconds: number;
   pausedPolicy: PausedPolicy;
@@ -33,7 +39,8 @@ export const defaultBandwidthSettings: BandwidthSettings = {
   enabled: false,
   throttleBytesPerSecond: 10_000_000, // 80 Mb/s = 10 MB/s
   throttleUnit: "Mbps",
-  pollIntervalSeconds: 5,
+  idlePollIntervalSeconds: 15,
+  activePollIntervalSeconds: 60,
   recoveryGraceSeconds: 30,
   pausedPolicy: "grace",
   pausedGraceSeconds: 120,
@@ -43,7 +50,8 @@ export const defaultBandwidthSettings: BandwidthSettings = {
 export const bandwidthSettingLimits = {
   /** The cap, in Mb/s: 1 Mb/s (125 kB/s) to 10,000 Mb/s (1.25 GB/s). */
   throttleMbps: { min: 1, max: 10_000 },
-  pollIntervalSeconds: { min: 2, max: 300 },
+  idlePollIntervalSeconds: { min: 2, max: 300 },
+  activePollIntervalSeconds: { min: 2, max: 600 },
   recoveryGraceSeconds: { min: 0, max: 3600 },
   pausedGraceSeconds: { min: 0, max: 3600 },
 } as const;
@@ -86,7 +94,8 @@ export const initialControllerState: BandwidthControllerState = {
 export type BandwidthSettingsPatch = {
   enabled?: boolean;
   throttle?: { value: number; unit: ThrottleUnit };
-  pollIntervalSeconds?: number;
+  idlePollIntervalSeconds?: number;
+  activePollIntervalSeconds?: number;
   recoveryGraceSeconds?: number;
   pausedPolicy?: PausedPolicy;
   pausedGraceSeconds?: number;
@@ -95,7 +104,8 @@ export type BandwidthSettingsPatch = {
 const patchKeys = new Set([
   "enabled",
   "throttle",
-  "pollIntervalSeconds",
+  "idlePollIntervalSeconds",
+  "activePollIntervalSeconds",
   "recoveryGraceSeconds",
   "pausedPolicy",
   "pausedGraceSeconds",
@@ -152,7 +162,12 @@ export function parseSettingsPatch(
   }
 
   for (
-    const key of ["pollIntervalSeconds", "recoveryGraceSeconds", "pausedGraceSeconds"] as const
+    const key of [
+      "idlePollIntervalSeconds",
+      "activePollIntervalSeconds",
+      "recoveryGraceSeconds",
+      "pausedGraceSeconds",
+    ] as const
   ) {
     if (key in input) {
       const value = input[key];
@@ -185,7 +200,9 @@ export function applySettingsPatch(
       ? toBytesPerSecond(patch.throttle.value, patch.throttle.unit)
       : settings.throttleBytesPerSecond,
     throttleUnit: patch.throttle?.unit ?? settings.throttleUnit,
-    pollIntervalSeconds: patch.pollIntervalSeconds ?? settings.pollIntervalSeconds,
+    idlePollIntervalSeconds: patch.idlePollIntervalSeconds ?? settings.idlePollIntervalSeconds,
+    activePollIntervalSeconds: patch.activePollIntervalSeconds ??
+      settings.activePollIntervalSeconds,
     recoveryGraceSeconds: patch.recoveryGraceSeconds ?? settings.recoveryGraceSeconds,
     pausedPolicy: patch.pausedPolicy ?? settings.pausedPolicy,
     pausedGraceSeconds: patch.pausedGraceSeconds ?? settings.pausedGraceSeconds,
@@ -200,7 +217,11 @@ export interface BandwidthStore {
   saveState(state: BandwidthControllerState): void;
 }
 
-/** Single-row tables created by migration 11. */
+/**
+ * Single-row tables created by migration 11; migration 12 added the idle and active intervals.
+ * The old poll_interval_seconds column is kept equal to the idle interval, so an older image
+ * started on this database still polls sensibly.
+ */
 export class SqliteBandwidthStore implements BandwidthStore {
   readonly #db: DB;
 
@@ -211,8 +232,9 @@ export class SqliteBandwidthStore implements BandwidthStore {
   getSettings(): BandwidthSettings {
     const row = firstRow(
       this.#db,
-      `SELECT enabled, throttle_bytes_per_second, throttle_unit, poll_interval_seconds,
-        recovery_grace_seconds, paused_policy, paused_grace_seconds, updated_at
+      `SELECT enabled, throttle_bytes_per_second, throttle_unit, idle_poll_interval_seconds,
+        active_poll_interval_seconds, recovery_grace_seconds, paused_policy, paused_grace_seconds,
+        updated_at
       FROM bandwidth_automation_settings WHERE id = 1`,
     );
 
@@ -225,13 +247,14 @@ export class SqliteBandwidthStore implements BandwidthStore {
       enabled: Number(row[0]) === 1,
       throttleBytesPerSecond: positiveInteger(row[1]) ?? defaults.throttleBytesPerSecond,
       throttleUnit: isThrottleUnit(row[2]) ? row[2] : defaults.throttleUnit,
-      pollIntervalSeconds: positiveInteger(row[3]) ?? defaults.pollIntervalSeconds,
-      recoveryGraceSeconds: nonNegativeInteger(row[4]) ?? defaults.recoveryGraceSeconds,
-      pausedPolicy: pausedPolicies.includes(row[5] as PausedPolicy)
-        ? row[5] as PausedPolicy
+      idlePollIntervalSeconds: positiveInteger(row[3]) ?? defaults.idlePollIntervalSeconds,
+      activePollIntervalSeconds: positiveInteger(row[4]) ?? defaults.activePollIntervalSeconds,
+      recoveryGraceSeconds: nonNegativeInteger(row[5]) ?? defaults.recoveryGraceSeconds,
+      pausedPolicy: pausedPolicies.includes(row[6] as PausedPolicy)
+        ? row[6] as PausedPolicy
         : defaults.pausedPolicy,
-      pausedGraceSeconds: nonNegativeInteger(row[6]) ?? defaults.pausedGraceSeconds,
-      updatedAt: typeof row[7] === "string" ? row[7] : null,
+      pausedGraceSeconds: nonNegativeInteger(row[7]) ?? defaults.pausedGraceSeconds,
+      updatedAt: typeof row[8] === "string" ? row[8] : null,
     };
   }
 
@@ -239,13 +262,16 @@ export class SqliteBandwidthStore implements BandwidthStore {
     this.#db.query(
       `INSERT INTO bandwidth_automation_settings (
         id, enabled, throttle_bytes_per_second, throttle_unit, poll_interval_seconds,
-        recovery_grace_seconds, paused_policy, paused_grace_seconds, updated_at
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+        idle_poll_interval_seconds, active_poll_interval_seconds, recovery_grace_seconds,
+        paused_policy, paused_grace_seconds, updated_at
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         enabled = excluded.enabled,
         throttle_bytes_per_second = excluded.throttle_bytes_per_second,
         throttle_unit = excluded.throttle_unit,
         poll_interval_seconds = excluded.poll_interval_seconds,
+        idle_poll_interval_seconds = excluded.idle_poll_interval_seconds,
+        active_poll_interval_seconds = excluded.active_poll_interval_seconds,
         recovery_grace_seconds = excluded.recovery_grace_seconds,
         paused_policy = excluded.paused_policy,
         paused_grace_seconds = excluded.paused_grace_seconds,
@@ -254,7 +280,9 @@ export class SqliteBandwidthStore implements BandwidthStore {
         settings.enabled ? 1 : 0,
         settings.throttleBytesPerSecond,
         settings.throttleUnit,
-        settings.pollIntervalSeconds,
+        settings.idlePollIntervalSeconds,
+        settings.idlePollIntervalSeconds,
+        settings.activePollIntervalSeconds,
         settings.recoveryGraceSeconds,
         settings.pausedPolicy,
         settings.pausedGraceSeconds,

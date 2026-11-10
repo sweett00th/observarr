@@ -153,6 +153,8 @@ export function evaluatePlayback(
 
 export type DecisionReason =
   | "streams_active"
+  /** An authenticated webhook reported playback; Jellyfin's sessions haven't confirmed it yet. */
+  | "playback_started"
   | "grace_period"
   | "idle"
   | "jellyfin_unavailable";
@@ -219,46 +221,100 @@ export function limitsMatch(actualBytesPerSecond: number, desiredBytesPerSecond:
   return Math.abs(actualBytesPerSecond - desiredBytesPerSecond) <= tolerance;
 }
 
+/** What a Jellyfin playback webhook means here. Starts and resumes cap at once; the rest check. */
+export type PlaybackEventKind = "start" | "resume" | "pause" | "stop";
+
+export type PlaybackWebhook = {
+  kind: PlaybackEventKind;
+  /** The stream it is about: see playbackStreamKey. */
+  streamKey: string;
+  /** For logs and the status, e.g. "PlaybackStart" or "PlaybackProgress (resumed)". */
+  label: string;
+};
+
 /**
- * Whether a Jellyfin webhook is worth reconciling for right away, and why. Starts and stops
- * always are. Progress pings arrive every few seconds per stream, so only a stream the last
- * check didn't know about, or one that paused or resumed since, counts. `knownStreams` maps
- * DeviceId to IsPaused from the last successful check; null means there wasn't one.
+ * What a Jellyfin Webhook plugin payload means for bandwidth automation, or null when nothing.
+ *
+ * The plugin sends PlaybackStart, PlaybackProgress and PlaybackStop; it has no pause or resume
+ * event. Pauses and resumes are progress events whose IsPaused differs from what was last known
+ * for that stream (`known` maps stream keys to IsPaused). Progress pings arrive every few seconds
+ * per stream, so one that changes nothing is null, as are other notification types and payloads
+ * missing the fields every plugin playback event carries (ItemId; IsPaused for progress).
  */
-export function webhookTriggerReason(
+export function classifyJellyfinWebhook(
   payload: unknown,
-  knownStreams: ReadonlyMap<string, boolean> | null,
-): string | null {
+  known: ReadonlyMap<string, boolean>,
+): PlaybackWebhook | null {
   if (!isObject(payload)) {
     return null;
   }
 
-  const type = pickString(payload, ["NotificationType", "notificationType", "Event", "event"]);
-
-  if (type === "PlaybackStart" || type === "PlaybackStop") {
-    return type;
+  const type = pickString(payload, ["NotificationType", "notificationType"]);
+  if (type !== "PlaybackStart" && type !== "PlaybackProgress" && type !== "PlaybackStop") {
+    return null;
   }
 
-  if (type !== "PlaybackProgress") {
+  const streamKey = playbackStreamKey(payload);
+  if (!streamKey) {
+    return null;
+  }
+
+  if (type === "PlaybackStart") {
+    return { kind: "start", streamKey, label: type };
+  }
+
+  if (type === "PlaybackStop") {
+    return { kind: "stop", streamKey, label: type };
+  }
+
+  const isPaused = typeof payload.IsPaused === "boolean" ? payload.IsPaused : null;
+  if (isPaused === null) {
+    return null;
+  }
+
+  const knownPaused = known.get(streamKey);
+  if (knownPaused === isPaused) {
+    return null;
+  }
+
+  if (knownPaused === undefined) {
+    return isPaused
+      ? { kind: "pause", streamKey, label: "PlaybackProgress (paused, new stream)" }
+      : { kind: "resume", streamKey, label: "PlaybackProgress (new stream)" };
+  }
+
+  return isPaused
+    ? { kind: "pause", streamKey, label: "PlaybackProgress (paused)" }
+    : { kind: "resume", streamKey, label: "PlaybackProgress (resumed)" };
+}
+
+/**
+ * Names the stream a webhook payload is about, the way sessionStreamKey names a /Sessions entry:
+ * Jellyfin's DeviceId, else its session Id, else user and item. Null without an ItemId, which every
+ * playback event from the plugin has.
+ */
+export function playbackStreamKey(payload: Record<string, unknown>): string | null {
+  const itemId = pickString(payload, ["ItemId", "itemId"]);
+  if (!itemId) {
     return null;
   }
 
   const deviceId = pickString(payload, ["DeviceId", "deviceId"]);
-  if (!deviceId || !knownStreams) {
-    return "PlaybackProgress";
+  if (deviceId) {
+    return deviceId;
   }
 
-  const knownPaused = knownStreams.get(deviceId);
-  if (knownPaused === undefined) {
-    return "PlaybackProgress (new stream)";
+  const sessionId = pickString(payload, ["Id", "SessionId"]);
+  if (sessionId) {
+    return `session:${sessionId}`;
   }
 
-  const isPaused = typeof payload.IsPaused === "boolean" ? payload.IsPaused : null;
-  if (isPaused !== null && isPaused !== knownPaused) {
-    return isPaused ? "PlaybackProgress (paused)" : "PlaybackProgress (resumed)";
-  }
+  return `user:${pickString(payload, ["UserId", "NotificationUsername"]) ?? ""}:${itemId}`;
+}
 
-  return null;
+/** The key webhooks use for this session's stream; see playbackStreamKey. */
+export function sessionStreamKey(session: JellyfinPlaybackSession): string {
+  return session.deviceId ?? `session:${session.id}`;
 }
 
 function pickString(value: Record<string, unknown>, keys: string[]): string | null {

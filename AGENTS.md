@@ -42,12 +42,30 @@ Current durable architecture decisions:
   explicitly requested.
 - Bandwidth automation (`server/bandwidth/`) is the explicitly requested exception: it polls
   Jellyfin `/Sessions` and SABnzbd's queue for itself only. Nothing it does feeds the Event Console
-  or Media Timelines. Jellyfin webhooks only nudge it through the `onJellyfinWebhook` hook of
-  `createWebhookRoutes`, which must stay fire-and-forget and leave the payload alone.
+  or Media Timelines. Jellyfin webhooks reach it through the `onJellyfinWebhook(payload, context)`
+  hook of `createWebhookRoutes` (`context` = `{ authenticated, receivedAt }`, receipt time on the
+  monotonic clock). The hook must stay fire-and-forget and leave the payload alone.
+- Bandwidth automation is event first. An authenticated PlaybackStart, or a PlaybackProgress that
+  resumes or is the first seen for a stream, caps SABnzbd at once (`#throttleNow`): no Jellyfin
+  call and no SABnzbd read (except one read when SABnzbd was never observed and the limit isn't
+  owned yet), then a reconcile follows. Authenticated means `SHARED_SECRET` is set (the route
+  already rejected requests without it); without a secret, webhooks only request a reconcile and
+  never write to SABnzbd. Stops and pauses never lift the cap themselves: they reconcile, and the
+  recovery grace still runs and is rechecked at its end. Progress pings that change nothing are
+  ignored (`classifyJellyfinWebhook`; the plugin has no pause/resume types, only `IsPaused`).
+- Races: every SABnzbd write step goes through one `PriorityLock` (fast path "high"), and
+  reconciles read SABnzbd inside it just before deciding. Starts bump `#activityGeneration`; a
+  reconcile whose Jellyfin read predates a start can't lower protection. Webhook-reported starts
+  count as streams until `/Sessions` lists them or `webhookEvidenceMs` (60 s) passes. Reconciles
+  stay serialized through `#exclusive`.
+- Polling is adaptive: the idle interval while unrestricted or failing, the active interval while
+  capped, sooner for the grace end, paused/stale changes and evidence expiry.
 - Bandwidth automation is off by default. Its nonsecret settings and its bookkeeping (whether
-  SABnzbd's current limit is ObservaRR's, and which limit to put back) live in SQLite (migration
-  11). `SABNZBD_URL` and `SABNZBD_API_KEY` are server-only like the Jellyfin ones: never return or
-  log a key. SABnzbd's key goes in the POST body, never in a URL.
+  SABnzbd's current limit is ObservaRR's, and which limit to put back) live in SQLite (migrations
+  11 and 12). Migration 12 replaced `poll_interval_seconds` with idle/active intervals; the old
+  column stays and is kept equal to the idle interval so an older image still works.
+  `SABNZBD_URL` and `SABNZBD_API_KEY` are server-only like the Jellyfin ones: never return or log
+  a key. SABnzbd's key goes in the POST body, never in a URL.
 - While enabled it owns SABnzbd's global speed limit and corrects drift; it must never pause or
   resume SABnzbd or touch jobs, categories or post-processing. Turning it off restores the limit
   from before automation unless someone changed SABnzbd's limit since. An unreadable Jellyfin

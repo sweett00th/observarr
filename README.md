@@ -501,10 +501,20 @@ dashboard.
      key).
 2. Open the dashboard. With automation off, **Reconcile now** only checks Jellyfin and SABnzbd,
    so use it to see both connect. Adjust the settings, then switch automation on.
-3. Recommended: on the Jellyfin Webhook plugin's ObservaRR destination (`/webhook/jellyfin`),
-   enable **Playback Start**, **Playback Stop** and **Playback Progress**. With them it reacts
-   within about a second instead of at the next poll. Polling works without them and catches any
-   webhook that goes missing.
+3. Strongly recommended: set `SHARED_SECRET`, and on the Jellyfin Webhook plugin's ObservaRR
+   destination (`/webhook/jellyfin`):
+   - enable **Playback Start**, **Playback Stop** and **Playback Progress** (the plugin has no
+     separate pause or resume event: a pause or resume is a Playback Progress whose `IsPaused`
+     changed);
+   - tick **Send All Properties** (or use a template that sends `NotificationType`, `ItemId`,
+     `DeviceId` and `IsPaused` as top-level JSON fields; the Event Console already relies on
+     `NotificationType`);
+   - add a request header `x-sms-secret` with the secret (see [Webhook Secret](#webhook-secret)).
+
+   With an authenticated webhook, SABnzbd is capped the moment playback starts. Without
+   `SHARED_SECRET` anyone on the LAN could send a fake playback event, so webhooks then only
+   trigger a check of Jellyfin's sessions (about a second later) and never change SABnzbd on their
+   own word. Polling works without webhooks too and catches any that go missing.
 
 ### How it decides
 
@@ -521,15 +531,43 @@ dashboard.
 - If Jellyfin can't be read (down, timing out, rejecting the key), the cap goes on, or stays on.
   An outage never lifts it. Once Jellyfin answers again with nothing playing, the grace period
   starts from then.
-- Every check reads Jellyfin's `/Sessions` and SABnzbd's queue. SABnzbd is written to only when its
-  limit should change or has drifted (SABnzbd restarted, someone changed it by hand, another
-  controller set it).
-- Checks run one at a time: polls, webhooks, settings changes and **Reconcile now** queue behind
-  each other, and requests that arrive while one is waiting share it. Webhook-triggered checks are
-  at least a second apart, and Playback Progress pings only trigger one for a new stream or a pause
-  or resume.
+
+Event first, with polling as the safety net:
+
+- **Playback starts or resumes** (an authenticated Playback Start, or a Playback Progress for a
+  stream that was paused or not known yet): the cap is written to SABnzbd straight away. There is
+  no Jellyfin request and no SABnzbd read on the way. It doesn't wait for checks that are running
+  or queued, even one stuck on a slow Jellyfin; at most it waits for a SABnzbd request already
+  under way. A check of Jellyfin's sessions follows. A start Jellyfin's sessions don't list yet
+  counts as a stream for up to a minute, so a slow-to-update Jellyfin can't lift the cap again.
+  Repeated starts write nothing once SABnzbd is capped. (One exception: if SABnzbd hasn't answered
+  at all since startup and automation doesn't own its limit yet, it is read once first, so the
+  right limit can be put back when automation is turned off.)
+- **Playback stops or pauses**: never lifts the cap by itself. It triggers a check of Jellyfin's
+  sessions right away: anything still counting (another user, a paused stream under the
+  paused-streams setting) keeps the cap; otherwise the recovery grace period starts. When it ends,
+  Jellyfin is checked again before the cap comes off. A start during the grace period cancels it.
+- **Plain Playback Progress pings** (every few seconds per stream) are ignored: no requests, no log
+  lines.
+- **Polling** is adaptive: every idle interval (15 s) while nothing plays, every active interval
+  (60 s) while capped, and every idle interval while Jellyfin or SABnzbd is failing. It runs
+  sooner when the grace period ends or a paused or stale stream stops counting. It catches missed
+  webhooks, stale sessions, SABnzbd restarts and changes made by hand.
+- SABnzbd is written to only when its limit should change or has drifted (SABnzbd restarted,
+  someone changed it by hand, another controller set it).
+
+Races are handled explicitly:
+
+- Every SABnzbd write goes through one lock, so two writes never overlap or contradict each other.
+  Playback starts jump to the front of it.
+- Checks (polls, webhook-triggered checks, settings changes, **Reconcile now**) still run one at a
+  time and share a waiting run. Webhook-triggered checks are at least a second apart.
+- Each playback start bumps an activity counter. A check whose Jellyfin read began before a newer
+  start can't start the grace period or lift the cap on that older answer. SABnzbd is read inside
+  the lock just before deciding, so a start that arrives during that read is still seen.
 - Each request to Jellyfin or SABnzbd times out after 3 seconds. Timeouts, refused connections and
-  5xx answers are retried twice; a rejected API key isn't.
+  5xx answers are retried twice; a rejected API key isn't. A failed write is retried by the
+  follow-up check and then every idle interval, and shows in the panel.
 - At startup it checks right away, so a restart can't leave SABnzbd wrongly capped or uncapped. If
   ObservaRR restarts while SABnzbd is capped and nothing is playing, the cap comes off one grace
   period after startup.
@@ -540,7 +578,8 @@ dashboard.
 | --------------------- | ------------------------ | ------------------------------------------------- |
 | Enabled               | Off                      |                                                   |
 | Throttled speed       | 80 Mb/s (10 MB/s)        | 1 to 10,000 Mb/s, entered in Mb/s or MB/s         |
-| Polling interval      | 5 s                      | 2 to 300 s                                        |
+| Idle check interval   | 15 s                     | 2 to 300 s (also the retry interval on errors)    |
+| Active check interval | 60 s                     | 2 to 600 s                                        |
 | Recovery grace period | 30 s                     | 0 to 3600 s                                       |
 | Paused streams        | Count for a grace period | Count for a grace period, always, or never        |
 | Paused grace period   | 120 s                    | 0 to 3600 s (only for "count for a grace period") |
@@ -548,6 +587,11 @@ dashboard.
 "Always" keeps the cap for as long as anything is paused, and "never" lifts it as soon as nothing is
 actually playing (after the recovery grace). Settings are kept in SQLite. URLs and keys only ever
 come from the environment.
+
+The two check intervals replace the single polling interval of earlier versions (migration 12). A
+polling interval left at the old 5 s default moves to the new defaults. One that was changed
+becomes the idle interval, and the active interval too if it was longer than 60 s. Other saved
+settings are kept.
 
 ### Megabits and megabytes
 
@@ -595,13 +639,64 @@ conflict, since bandwidth automation never pauses or resumes.
 
 ### Status and logs
 
-The panel shows the active stream count and what is playing, SABnzbd's current limit and measured
-download speed, the current decision, whether Jellyfin and SABnzbd answer, the last successful
-reconciliation, the last speed-limit change and recent errors (kept in memory, the latest 20).
-Its logs are JSON lines: `bandwidth.limit_changed`, `bandwidth.mode_changed`,
-`bandwidth.jellyfin_failed` / `bandwidth.jellyfin_recovered`, `bandwidth.sabnzbd_failed` /
-`bandwidth.sabnzbd_recovered`, `bandwidth.external_change`, `bandwidth.conflict_suspected`,
-`bandwidth.settings_saved` and `bandwidth.restore_skipped`.
+The panel shows:
+
+- the controller mode: Unrestricted, Throttled, Recovery grace or Protective (error), the last
+  meaning Jellyfin can't be read and the cap is held;
+- the active stream count, including starts that only a webhook has reported so far, and what is
+  playing;
+- SABnzbd's current limit and measured download speed, and whether Jellyfin and SABnzbd answer;
+- the last successful reconciliation and the last speed-limit change;
+- the last trigger (webhook, scheduled poll, manual, startup or settings change);
+- the last playback webhook and what it did, and the last webhook-to-SABnzbd timing;
+- whether instant capping is on (it needs `SHARED_SECRET`);
+- recent errors (kept in memory, the latest 20).
+
+Its logs are JSON lines:
+
+- `bandwidth.webhook`: one line per playback start, resume, pause or stop, never per progress
+  ping, with the outcome and, for a cap, the timings;
+- `bandwidth.limit_changed` and `bandwidth.mode_changed`;
+- `bandwidth.jellyfin_failed` / `bandwidth.jellyfin_recovered` and `bandwidth.sabnzbd_failed` /
+  `bandwidth.sabnzbd_recovered`;
+- `bandwidth.external_change` and `bandwidth.conflict_suspected`;
+- `bandwidth.settings_saved` and `bandwidth.restore_skipped`.
+
+### Measuring webhook-to-SABnzbd latency
+
+The timing covers ObservaRR's part: from the moment the webhook request reached ObservaRR to
+SABnzbd acknowledging the new limit. It is measured on a monotonic clock. Jellyfin's own delay
+between someone pressing Play and the plugin sending the webhook isn't included, and neither is
+the network trip from Jellyfin to ObservaRR. The panel's **Webhook → SABnzbd cap** shows three
+parts:
+
+- receipt to the SABnzbd request;
+- the request itself;
+- receipt to the end of the Jellyfin check that followed.
+
+On a healthy LAN the target is under 250 ms, most of it SABnzbd's answer.
+
+To check it on Unraid:
+
+1. Start something in Jellyfin while nothing else plays and SABnzbd is unrestricted. Then look at
+   the panel, or `GET /api/bandwidth-automation` (logged in) for `lastWebhookThrottle`.
+2. Or read the container log: `docker logs observarr 2>&1 | grep bandwidth.webhook`. A cap logs
+   `"outcome":"capped"` with `receivedToRequestMs`, `requestMs` and `receivedToAckMs`.
+3. To test without playing anything, post a fake start from a machine on the LAN. It really caps
+   SABnzbd:
+
+   ```sh
+   curl -s -X POST "http://UNRAID-IP:3020/webhook/jellyfin" \
+     -H "Content-Type: application/json" -H "x-sms-secret: YOUR-SECRET" \
+     -d '{"NotificationType":"PlaybackStart","ItemId":"test","DeviceId":"latency-test"}'
+   ```
+
+   Jellyfin never lists that stream, so the cap comes off by itself after about 90 seconds (the
+   one-minute window for unconfirmed starts, then the recovery grace). Posting the matching stop
+   (the same command with `PlaybackStop`) ends the window at once, and the cap then comes off
+   after the grace period. Both show up in the Event Console like any Jellyfin event. Neither
+   sends a text (playback starts and stops aren't notification events) or makes a timeline entry
+   (they name no media).
 
 API keys never appear in logs, the panel, API responses or the database. SABnzbd's key travels in
 the request body rather than the URL, and Jellyfin's in the `Authorization` header.

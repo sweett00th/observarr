@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import {
+  classifyJellyfinWebhook,
   decideMode,
   evaluatePlayback,
   limitsMatch,
   PauseTracker,
+  playbackStreamKey,
+  sessionStreamKey,
   staleSessionMs,
-  webhookTriggerReason,
 } from "../../server/bandwidth/policy.ts";
 import {
   BYTES_PER_MEGABIT,
@@ -14,7 +16,7 @@ import {
   fromBytesPerSecond,
   toBytesPerSecond,
 } from "../../server/bandwidth/units.ts";
-import { CAP, playing } from "./helpers.ts";
+import { CAP, playbackEvent, playing } from "./helpers.ts";
 
 const NOW = Date.parse("2026-11-09T20:00:00.000Z");
 const grace = { pausedPolicy: "grace" as const, pausedGraceMs: 120_000 };
@@ -161,30 +163,55 @@ Deno.test("PauseTracker times pauses for Jellyfin versions without LastPausedDat
   assert.equal(evaluatePlayback(snapshot, NOW + 140_000, grace, tracker).pausedCounted, 1);
 });
 
-Deno.test("webhookTriggerReason reacts to starts, stops and pause changes only", () => {
+Deno.test("classifyJellyfinWebhook: starts and resumes, pauses and stops, nothing else", () => {
   const known = new Map([["tv", false], ["phone", true]]);
+  const kind = (payload: unknown) => classifyJellyfinWebhook(payload, known)?.kind ?? null;
+  const label = (payload: unknown) => classifyJellyfinWebhook(payload, known)?.label ?? null;
+  const progress = (DeviceId: string, IsPaused: boolean) =>
+    playbackEvent("PlaybackProgress", { DeviceId, IsPaused });
 
-  assert.equal(webhookTriggerReason({ NotificationType: "PlaybackStart" }, known), "PlaybackStart");
-  assert.equal(webhookTriggerReason({ NotificationType: "PlaybackStop" }, known), "PlaybackStop");
-  assert.equal(webhookTriggerReason({ NotificationType: "ItemAdded" }, known), null);
-  assert.equal(webhookTriggerReason({ NotificationType: "SessionStart" }, known), null);
-  assert.equal(webhookTriggerReason("not an object", known), null);
-
-  const progress = (DeviceId: string, IsPaused: boolean) => ({
-    NotificationType: "PlaybackProgress",
-    DeviceId,
-    IsPaused,
+  assert.deepEqual(classifyJellyfinWebhook(playbackEvent("PlaybackStart"), known), {
+    kind: "start",
+    streamKey: "tv",
+    label: "PlaybackStart",
   });
-  assert.equal(webhookTriggerReason(progress("tv", false), known), null);
-  assert.equal(webhookTriggerReason(progress("tv", true), known), "PlaybackProgress (paused)");
-  assert.equal(webhookTriggerReason(progress("phone", false), known), "PlaybackProgress (resumed)");
+  assert.equal(kind(playbackEvent("PlaybackStop")), "stop");
+
+  // The plugin has no pause or resume event: IsPaused changes inside PlaybackProgress.
+  assert.equal(kind(progress("tv", false)), null, "a ping that changes nothing");
+  assert.equal(label(progress("tv", true)), "PlaybackProgress (paused)");
+  assert.equal(kind(progress("tv", true)), "pause");
+  assert.equal(label(progress("phone", false)), "PlaybackProgress (resumed)");
+  assert.equal(kind(progress("phone", false)), "resume");
+  assert.equal(label(progress("new", false)), "PlaybackProgress (new stream)");
+  assert.equal(kind(progress("new", false)), "resume");
+  assert.equal(label(progress("new", true)), "PlaybackProgress (paused, new stream)");
+  assert.equal(kind(progress("new", true)), "pause");
+
+  // Other events and malformed payloads are nothing.
+  for (const type of ["ItemAdded", "SessionStart", "UserDataSaved", "Generic", "Test"]) {
+    assert.equal(kind(playbackEvent("PlaybackStart", { NotificationType: type })), null, type);
+  }
+  assert.equal(kind("not an object"), null);
+  assert.equal(kind(null), null);
+  assert.equal(kind({ NotificationType: "PlaybackStart" }), null, "no ItemId");
+  assert.equal(kind(playbackEvent("PlaybackProgress", { IsPaused: "true" })), null);
+  assert.equal(kind(playbackEvent("PlaybackProgress", { IsPaused: undefined })), null);
+});
+
+Deno.test("webhook and /Sessions stream keys line up", () => {
+  const event = (overrides: Record<string, unknown>) =>
+    playbackStreamKey(playbackEvent("PlaybackStart", overrides));
+
+  assert.equal(event({}), "tv");
+  assert.equal(event({ DeviceId: undefined }), "session:session-tv");
+  assert.equal(event({ DeviceId: undefined, Id: undefined }), "user:user-1:item-1");
+  assert.equal(event({ ItemId: undefined }), null);
+
+  assert.equal(sessionStreamKey(playing({ deviceId: "tv" })), "tv");
   assert.equal(
-    webhookTriggerReason(progress("new", false), known),
-    "PlaybackProgress (new stream)",
-  );
-  assert.equal(
-    webhookTriggerReason(progress("tv", false), null),
-    "PlaybackProgress",
-    "no check yet",
+    sessionStreamKey(playing({ deviceId: null, id: "session-tv" })),
+    "session:session-tv",
+    "a session without a DeviceId matches a webhook without one",
   );
 });

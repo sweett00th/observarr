@@ -547,9 +547,39 @@ const migrations: Migration[] = [
       VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
     `,
   },
+  {
+    version: 12,
+    name: "bandwidth_adaptive_polling",
+    // Webhooks now cap SABnzbd the moment playback starts, so polling is only a safety net: one
+    // interval while nothing plays, a longer one while capped. The old single interval stays as
+    // a column (kept equal to the idle one). An interval someone changed from the old 5 s default
+    // carries over as the idle interval, and as the active one too when it is longer than that
+    // (they asked for less polling); the default moves to the new defaults.
+    sql: `
+      ALTER TABLE bandwidth_automation_settings
+        ADD COLUMN idle_poll_interval_seconds INTEGER NOT NULL DEFAULT 15
+        CHECK (idle_poll_interval_seconds > 0);
+
+      ALTER TABLE bandwidth_automation_settings
+        ADD COLUMN active_poll_interval_seconds INTEGER NOT NULL DEFAULT 60
+        CHECK (active_poll_interval_seconds > 0);
+
+      UPDATE bandwidth_automation_settings
+      SET idle_poll_interval_seconds = poll_interval_seconds
+      WHERE poll_interval_seconds <> 5 AND poll_interval_seconds BETWEEN 2 AND 300;
+
+      UPDATE bandwidth_automation_settings
+      SET active_poll_interval_seconds = poll_interval_seconds
+      WHERE poll_interval_seconds <> 5 AND poll_interval_seconds BETWEEN 61 AND 300;
+
+      UPDATE bandwidth_automation_settings
+      SET poll_interval_seconds = idle_poll_interval_seconds;
+    `,
+  },
 ];
 
-export function runMigrations(db: DB): void {
+/** `throughVersion` stops after that migration; tests use it to start from an older schema. */
+export function runMigrations(db: DB, options: { throughVersion?: number } = {}): void {
   db.execute(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY,
@@ -565,6 +595,10 @@ export function runMigrations(db: DB): void {
   for (const migration of migrations) {
     if (appliedVersions.has(migration.version)) {
       continue;
+    }
+
+    if (options.throughVersion !== undefined && migration.version > options.throughVersion) {
+      break;
     }
 
     const appliedAt = new Date().toISOString();

@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { DB } from "sqlite";
 import {
   BandwidthController,
@@ -35,6 +36,15 @@ export class FakeClock implements Clock {
 
   now(): number {
     return this.#now;
+  }
+
+  monotonic(): number {
+    return this.#now;
+  }
+
+  /** Moves time forward without firing timers, e.g. to make a request take a while. */
+  bump(ms: number): void {
+    this.#now += ms;
   }
 
   setTimeout(callback: () => void, ms: number): TimerHandle {
@@ -99,25 +109,33 @@ export class FakeJellyfin implements JellyfinSessionSource {
   calls = 0;
   active = 0;
   maxActive = 0;
+  /** Shared with FakeSabnzbd, to check the order of requests. */
+  log: string[] = [];
 
   async fetchSessions(): Promise<JellyfinSessionsSnapshot> {
     this.calls += 1;
     this.active += 1;
     this.maxActive = Math.max(this.maxActive, this.active);
+    this.log.push("jellyfin:sessions");
+
+    // The answer reflects the moment the request reached Jellyfin; a gated (slow) response
+    // arrives later carrying that older state, which is what the race tests need.
+    const snapshot: JellyfinSessionsSnapshot = {
+      totalSessions: this.sessions.length + this.idleSessions,
+      playing: this.sessions.map((session) => ({ ...session })),
+    };
+    const failure = this.failWith;
 
     try {
       if (this.gate) {
         await this.gate.promise;
       }
 
-      if (this.failWith) {
-        throw this.failWith;
+      if (failure) {
+        throw failure;
       }
 
-      return {
-        totalSessions: this.sessions.length + this.idleSessions,
-        playing: this.sessions.map((session) => ({ ...session })),
-      };
+      return snapshot;
     } finally {
       this.active -= 1;
     }
@@ -137,10 +155,15 @@ export class FakeSabnzbd implements SabnzbdApi {
   writes: number[] = [];
   active = 0;
   maxActive = 0;
+  /** Shared with FakeJellyfin, to check the order of requests. */
+  log: string[] = [];
+  /** Runs inside each write, before it succeeds or fails (e.g. to let fake time pass). */
+  onWrite: (() => void) | null = null;
 
   async getQueueStatus(): Promise<SabnzbdQueueStatus> {
     return await this.#tracked(() => {
       this.reads += 1;
+      this.log.push("sab:read");
       if (this.readFailure) {
         throw this.readFailure;
       }
@@ -160,10 +183,13 @@ export class FakeSabnzbd implements SabnzbdApi {
 
   async setSpeedLimit(bytesPerSecond: number): Promise<void> {
     await this.#tracked(() => {
+      this.onWrite?.();
       if (this.writeFailure) {
+        this.log.push(`sab:write-failed:${bytesPerSecond}`);
         throw this.writeFailure;
       }
 
+      this.log.push(`sab:write:${bytesPerSecond}`);
       this.writes.push(bytesPerSecond);
       this.limit = bytesPerSecond;
     });
@@ -204,14 +230,42 @@ export function playing(overrides: Partial<JellyfinPlaybackSession> = {}): Jelly
   };
 }
 
-/** An in-memory database with every migration applied. */
-export function createTestDb(): DB {
+/**
+ * What the Jellyfin Webhook plugin sends for a playback event with "Send All Properties" on
+ * (trimmed to the fields that matter here). Pauses and resumes are PlaybackProgress with IsPaused.
+ */
+export function playbackEvent(
+  type: "PlaybackStart" | "PlaybackProgress" | "PlaybackStop",
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    NotificationType: type,
+    ServerName: "jellyfin",
+    Name: "A Movie",
+    ItemId: "item-1",
+    ItemType: "Movie",
+    PlaybackPositionTicks: 0,
+    IsPaused: false,
+    IsAutomated: false,
+    DeviceId: "tv",
+    DeviceName: "Living Room TV",
+    ClientName: "Jellyfin Web",
+    NotificationUsername: "someone",
+    UserId: "user-1",
+    Id: "session-tv",
+    UtcTimestamp: "2026-11-09T20:00:00.0000000Z",
+    ...overrides,
+  };
+}
+
+/** An in-memory database with every migration applied (or only those through a version). */
+export function createTestDb(options: { throughVersion?: number } = {}): DB {
   const db = new DB();
   db.execute("PRAGMA foreign_keys = ON");
   const log = console.log;
   console.log = () => {};
   try {
-    runMigrations(db);
+    runMigrations(db, options);
   } finally {
     console.log = log;
   }
@@ -229,6 +283,10 @@ export function harness(options: {
   clock?: FakeClock;
   jellyfin?: FakeJellyfin | null;
   sabnzbd?: FakeSabnzbd | null;
+  /** Whether SHARED_SECRET is configured (default: yes, so authenticated webhooks cap at once). */
+  webhookAuth?: boolean;
+  /** How long a webhook-reported start counts before Jellyfin lists it (default 60 s). */
+  webhookEvidenceMs?: number;
 } = {}) {
   const db = options.db ?? createTestDb();
   const store = new SqliteBandwidthStore(db);
@@ -242,14 +300,28 @@ export function harness(options: {
   const clock = options.clock ?? new FakeClock();
   const jellyfin = options.jellyfin === undefined ? new FakeJellyfin() : options.jellyfin;
   const sabnzbd = options.sabnzbd === undefined ? new FakeSabnzbd() : options.sabnzbd;
+  const calls: string[] = [];
+  if (jellyfin) jellyfin.log = calls;
+  if (sabnzbd) sabnzbd.log = calls;
   const logs: LogEntry[] = [];
+  // consoleBandwidthLogger writes `event` and `at` first and spreads the details after them, so a
+  // detail with either name would replace the log line's name or time. Checked at dispose.
+  const clashingLogs: string[] = [];
+  const webhookAuth = options.webhookAuth ?? true;
   const controller = new BandwidthController({
     store,
     jellyfin,
     sabnzbd,
     clock,
-    logger: (level, event, details) => logs.push({ level, event, details }),
+    logger: (level, event, details) => {
+      if ("event" in details || "at" in details) {
+        clashingLogs.push(event);
+      }
+      logs.push({ level, event, details });
+    },
     secrets: [JELLYFIN_KEY, SABNZBD_KEY],
+    webhookAuthConfigured: () => webhookAuth,
+    webhookEvidenceMs: options.webhookEvidenceMs,
   });
   const settle = () => controller.whenIdle();
 
@@ -262,8 +334,14 @@ export function harness(options: {
     sabnzbd: sabnzbd as FakeSabnzbd,
     controller,
     logs,
+    /** Jellyfin and SABnzbd requests, in order: "jellyfin:sessions", "sab:read", "sab:write:N". */
+    calls,
     settle,
     advance: (ms: number) => clock.advance(ms, settle),
+    /** Delivers a webhook the way the route does: authenticated unless said otherwise. */
+    webhook(payload: unknown, authenticated = webhookAuth) {
+      controller.handleJellyfinWebhook(payload, { authenticated });
+    },
     /** Starts the controller and waits for its startup reconcile. */
     async start() {
       controller.start();
@@ -274,6 +352,7 @@ export function harness(options: {
       if (!options.keepDb) {
         db.close();
       }
+      assert.deepEqual(clashingLogs, [], "log details named `event` or `at` hide the line's own");
     },
   };
 }

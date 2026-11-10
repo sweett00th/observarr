@@ -32,10 +32,19 @@ type PausedPolicy = "grace" | "active" | "idle";
 type ConnectionState = "unknown" | "ok" | "error" | "not_configured";
 type DecisionReason =
   | "streams_active"
+  | "playback_started"
   | "grace_period"
   | "idle"
   | "jellyfin_unavailable"
   | "disabled";
+type ControllerMode =
+  | "off"
+  | "unrestricted"
+  | "throttled"
+  | "recovery_grace"
+  | "protective_error";
+type TriggerSource = "webhook" | "poll" | "manual" | "startup" | "settings";
+type WebhookOutcome = "capped" | "already_capped" | "cap_failed" | "check_requested";
 
 type ConnectionStatus = {
   state: ConnectionState;
@@ -51,7 +60,8 @@ type BandwidthStatus = {
     throttleBytesPerSecond: number;
     throttleUnit: ThrottleUnit;
     throttleValue: number;
-    pollIntervalSeconds: number;
+    idlePollIntervalSeconds: number;
+    activePollIntervalSeconds: number;
     recoveryGraceSeconds: number;
     pausedPolicy: PausedPolicy;
     pausedGraceSeconds: number;
@@ -60,6 +70,19 @@ type BandwidthStatus = {
   configured: { jellyfin: boolean; sabnzbd: boolean };
   lifecycle: string;
   mode: "unrestricted" | "throttled";
+  controllerMode: ControllerMode;
+  fastPath: { enabled: boolean; reason: string | null };
+  lastTrigger: { source: TriggerSource; detail: string; at: string } | null;
+  lastWebhook: { event: string; outcome: WebhookOutcome; at: string } | null;
+  lastWebhookThrottle: {
+    event: string;
+    receivedAt: string;
+    outcome: "capped" | "cap_failed";
+    receivedToRequestMs: number | null;
+    requestMs: number | null;
+    receivedToAckMs: number | null;
+    receivedToReconcileMs: number | null;
+  } | null;
   decision: {
     reason: DecisionReason | null;
     graceUntil: string | null;
@@ -74,6 +97,7 @@ type BandwidthStatus = {
     stale: number;
     transcoding: number;
     totalSessions: number;
+    pendingWebhookStreams: number;
     streams: Array<{
       userName: string | null;
       client: string | null;
@@ -143,7 +167,8 @@ type ReconcileResponse = BandwidthStatus & {
 type Draft = {
   throttleValue: string;
   throttleUnit: ThrottleUnit;
-  pollIntervalSeconds: string;
+  idlePollIntervalSeconds: string;
+  activePollIntervalSeconds: string;
   recoveryGraceSeconds: string;
   pausedPolicy: PausedPolicy;
   pausedGraceSeconds: string;
@@ -160,7 +185,8 @@ const unitLabels: Record<ThrottleUnit, string> = {
 };
 const limits = {
   throttleMbps: { min: 1, max: 10_000 },
-  pollIntervalSeconds: { min: 2, max: 300 },
+  idlePollIntervalSeconds: { min: 2, max: 300 },
+  activePollIntervalSeconds: { min: 2, max: 600 },
   recoveryGraceSeconds: { min: 0, max: 3600 },
   pausedGraceSeconds: { min: 0, max: 3600 },
 };
@@ -174,8 +200,25 @@ const sourceLabels = {
   sabnzbd: "SABnzbd",
   controller: "Controller",
 };
-const pollRange = limits.pollIntervalSeconds;
-const pollHelp = `How often Jellyfin is checked (${pollRange.min}–${pollRange.max} s)`;
+const idleRange = limits.idlePollIntervalSeconds;
+const activeRange = limits.activePollIntervalSeconds;
+const idleHelp = `Safety-net check while uncapped, and retries after errors ` +
+  `(${idleRange.min}–${idleRange.max} s)`;
+const activeHelp = `Safety-net check while capped, for a missed stop ` +
+  `(${activeRange.min}–${activeRange.max} s)`;
+const triggerLabels: Record<TriggerSource, string> = {
+  webhook: "Webhook",
+  poll: "Scheduled poll",
+  manual: "Manual",
+  startup: "Startup",
+  settings: "Settings change",
+};
+const webhookOutcomeLabels: Record<WebhookOutcome, string> = {
+  capped: "capped SABnzbd",
+  already_capped: "already capped, nothing written",
+  cap_failed: "SABnzbd didn't accept the cap",
+  check_requested: "checked Jellyfin's sessions",
+};
 
 /**
  * Dashboard panel for capping SABnzbd while Jellyfin plays. Talks only to
@@ -310,7 +353,8 @@ export function BandwidthAutomationPanel() {
         value: Number(draft.throttleValue),
         unit: draft.throttleUnit,
       },
-      pollIntervalSeconds: Number(draft.pollIntervalSeconds),
+      idlePollIntervalSeconds: Number(draft.idlePollIntervalSeconds),
+      activePollIntervalSeconds: Number(draft.activePollIntervalSeconds),
       recoveryGraceSeconds: Number(draft.recoveryGraceSeconds),
       pausedPolicy: draft.pausedPolicy,
       pausedGraceSeconds: Number(draft.pausedGraceSeconds),
@@ -373,7 +417,7 @@ export function BandwidthAutomationPanel() {
             sx={{ flexWrap: "wrap", rowGap: 1 }}
           >
             <PanelTitle />
-            <ModeChip enabled={enabled} mode={status.mode} />
+            <ModeChip mode={status.controllerMode} />
             <Box sx={{ flexGrow: 1 }} />
             <Tooltip
               title={configured ? "" : "Set the environment variables listed below first"}
@@ -404,6 +448,13 @@ export function BandwidthAutomationPanel() {
             <Alert severity="info">
               Set {missing.join(", ")}{" "}
               on the container (Unraid template) and restart it to use bandwidth automation.
+            </Alert>
+          )}
+          {configured && enabled && !status.fastPath.enabled && (
+            <Alert severity="info">
+              Instant capping when playback starts is off. {status.fastPath.reason}{" "}
+              Set SHARED_SECRET on the container and add it to the Jellyfin webhook (an x-sms-secret
+              header) to cap SABnzbd the moment a stream starts.
             </Alert>
           )}
           {loadError && <Alert severity="warning">Status refresh failed: {loadError}</Alert>}
@@ -444,7 +495,9 @@ export function BandwidthAutomationPanel() {
             <Grid item xs={12} sm={6} md={3}>
               <StatTile
                 label="Active Jellyfin streams"
-                value={playback ? String(playback.countedStreams) : "–"}
+                value={playback
+                  ? String(playback.countedStreams + playback.pendingWebhookStreams)
+                  : "–"}
                 detail={playback ? describePlayback(playback) : "Not checked yet"}
               />
             </Grid>
@@ -586,6 +639,50 @@ export function BandwidthAutomationPanel() {
                   : "Not polling while off"}
               </Fact>
             </Grid>
+            <Grid item xs={12} md={4}>
+              <Fact label="Last trigger">
+                {status.lastTrigger
+                  ? (
+                    <>
+                      {triggerLabels[status.lastTrigger.source]}{" "}
+                      {formatRelative(status.lastTrigger.at, now)}
+                      <br />
+                      <Typography
+                        component="span"
+                        variant="caption"
+                        color="text.secondary"
+                      >
+                        {status.lastTrigger.detail}
+                      </Typography>
+                    </>
+                  )
+                  : "None yet"}
+              </Fact>
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <Fact label="Last playback webhook">
+                {status.lastWebhook
+                  ? (
+                    <>
+                      {status.lastWebhook.event}, {formatRelative(status.lastWebhook.at, now)}
+                      <br />
+                      <Typography
+                        component="span"
+                        variant="caption"
+                        color="text.secondary"
+                      >
+                        {webhookOutcomeLabels[status.lastWebhook.outcome]}
+                      </Typography>
+                    </>
+                  )
+                  : "None since the container started"}
+              </Fact>
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <Fact label="Webhook → SABnzbd cap">
+                <WebhookLatency timing={status.lastWebhookThrottle} now={now} />
+              </Fact>
+            </Grid>
           </Grid>
 
           <Divider />
@@ -632,11 +729,20 @@ export function BandwidthAutomationPanel() {
             </Grid>
             <Grid item xs={12} sm={6} md={3}>
               <NumberField
-                label="Polling interval"
-                value={draft.pollIntervalSeconds}
-                onChange={(value) => setDraft({ ...draft, pollIntervalSeconds: value })}
-                error={validation.fields.pollIntervalSeconds}
-                helperText={pollHelp}
+                label="Idle check interval"
+                value={draft.idlePollIntervalSeconds}
+                onChange={(value) => setDraft({ ...draft, idlePollIntervalSeconds: value })}
+                error={validation.fields.idlePollIntervalSeconds}
+                helperText={idleHelp}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <NumberField
+                label="Active check interval"
+                value={draft.activePollIntervalSeconds}
+                onChange={(value) => setDraft({ ...draft, activePollIntervalSeconds: value })}
+                error={validation.fields.activePollIntervalSeconds}
+                helperText={activeHelp}
               />
             </Grid>
             <Grid item xs={12} sm={6} md={3}>
@@ -790,16 +896,51 @@ function PanelTitle() {
   );
 }
 
-function ModeChip(
-  { enabled, mode }: { enabled: boolean; mode: BandwidthStatus["mode"] },
+function ModeChip({ mode }: { mode: ControllerMode }) {
+  switch (mode) {
+    case "off":
+      return <Chip size="small" label="Off" />;
+    case "unrestricted":
+      return <Chip size="small" color="success" label="Unrestricted" />;
+    case "throttled":
+      return <Chip size="small" color="warning" label="Throttled" />;
+    case "recovery_grace":
+      return <Chip size="small" color="info" label="Recovery grace" />;
+    case "protective_error":
+      return <Chip size="small" color="error" label="Protective (error)" />;
+  }
+}
+
+/** Webhook receipt to SABnzbd's acknowledgement, not from when Play was pressed. */
+function WebhookLatency(
+  { timing, now }: { timing: BandwidthStatus["lastWebhookThrottle"]; now: number },
 ) {
-  if (!enabled) {
-    return <Chip size="small" label="Off" />;
+  if (!timing) {
+    return <>No webhook has capped SABnzbd since the container started</>;
   }
 
-  return mode === "throttled"
-    ? <Chip size="small" color="warning" label="Throttled" />
-    : <Chip size="small" color="success" label="Unrestricted" />;
+  const parts = [
+    timing.receivedToRequestMs === null ? null : `${timing.receivedToRequestMs} ms to send`,
+    timing.requestMs === null ? null : `${timing.requestMs} ms SABnzbd request`,
+    timing.receivedToReconcileMs === null
+      ? null
+      : `Jellyfin check done at ${timing.receivedToReconcileMs} ms`,
+  ].filter(Boolean);
+
+  return (
+    <>
+      {timing.outcome === "capped" && timing.receivedToAckMs !== null
+        ? `${timing.receivedToAckMs} ms`
+        : "Failed"} ({timing.event}, {formatRelative(timing.receivedAt, now)})
+      <br />
+      <Typography component="span" variant="caption" color="text.secondary">
+        {parts.join(" · ")}
+        {parts.length > 0 ? ". " : ""}
+        Measured from when ObservaRR received the webhook; Jellyfin's own delay in sending it isn't
+        included.
+      </Typography>
+    </>
+  );
 }
 
 function StatTile(
@@ -910,7 +1051,8 @@ function settingsToDraft(settings: BandwidthStatus["settings"]): Draft {
   return {
     throttleValue: trimNumber(settings.throttleValue),
     throttleUnit: settings.throttleUnit,
-    pollIntervalSeconds: String(settings.pollIntervalSeconds),
+    idlePollIntervalSeconds: String(settings.idlePollIntervalSeconds),
+    activePollIntervalSeconds: String(settings.activePollIntervalSeconds),
     recoveryGraceSeconds: String(settings.recoveryGraceSeconds),
     pausedPolicy: settings.pausedPolicy,
     pausedGraceSeconds: String(settings.pausedGraceSeconds),
@@ -921,7 +1063,8 @@ function sameDraft(left: Draft, right: Draft): boolean {
   return left.throttleUnit === right.throttleUnit &&
     left.pausedPolicy === right.pausedPolicy &&
     Number(left.throttleValue) === Number(right.throttleValue) &&
-    Number(left.pollIntervalSeconds) === Number(right.pollIntervalSeconds) &&
+    Number(left.idlePollIntervalSeconds) === Number(right.idlePollIntervalSeconds) &&
+    Number(left.activePollIntervalSeconds) === Number(right.activePollIntervalSeconds) &&
     Number(left.recoveryGraceSeconds) === Number(right.recoveryGraceSeconds) &&
     Number(left.pausedGraceSeconds) === Number(right.pausedGraceSeconds);
 }
@@ -962,7 +1105,8 @@ function validateDraft(
 
   for (
     const key of [
-      "pollIntervalSeconds",
+      "idlePollIntervalSeconds",
+      "activePollIntervalSeconds",
       "recoveryGraceSeconds",
       "pausedGraceSeconds",
     ] as const
@@ -996,6 +1140,9 @@ function describePlayback(
   playback: NonNullable<BandwidthStatus["playback"]>,
 ): string {
   const parts = [`${playback.playing} playing`];
+  if (playback.pendingWebhookStreams > 0) {
+    parts.push(`${playback.pendingWebhookStreams} just started (webhook)`);
+  }
   if (playback.transcoding > 0) {
     parts.push(`${playback.transcoding} transcoding`);
   }
@@ -1016,6 +1163,8 @@ function decisionTitle(status: BandwidthStatus): string {
   switch (status.decision.reason) {
     case "streams_active":
       return "Capped";
+    case "playback_started":
+      return "Capped (just started)";
     case "grace_period":
       return "Grace period";
     case "idle":
@@ -1036,6 +1185,9 @@ function decisionDetail(status: BandwidthStatus, now: number): string {
   switch (status.decision.reason) {
     case "streams_active":
       return `Jellyfin is playing, so SABnzbd is held to ${cap}.`;
+    case "playback_started":
+      return `A Jellyfin webhook reported playback, so SABnzbd was capped to ${cap} at once. ` +
+        "The next check confirms it with Jellyfin.";
     case "grace_period":
       return `Nothing playing. The cap comes off ${
         formatRelative(status.decision.graceUntil, now)

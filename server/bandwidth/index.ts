@@ -27,6 +27,8 @@ export function createBandwidthController(db: DB): BandwidthController {
       ? createSabnzbdClient({ url: sabnzbdUrl, apiKey: sabnzbdApiKey })
       : null,
     secrets: [jellyfinApiKey, sabnzbdApiKey, getSharedSecret()],
+    // The webhook route turns away requests without SHARED_SECRET only when it is set.
+    webhookAuthConfigured: () => Boolean(getSharedSecret()),
   });
 }
 

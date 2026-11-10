@@ -18,13 +18,24 @@ const webhookSources: EventSourceName[] = [
   "steamreviews",
 ];
 
+/** What the route knows about a Jellyfin webhook request, beyond its payload. */
+export type JellyfinWebhookContext = {
+  /**
+   * The request passed the SHARED_SECRET check. False when no secret is configured, since every
+   * request is let in then: nothing should act on such a payload without verifying it.
+   */
+  authenticated: boolean;
+  /** When the request reached the route, from performance.now() (a monotonic clock). */
+  receivedAt: number;
+};
+
 export type WebhookHooks = {
   /**
    * Sees every parsed Jellyfin webhook payload, before the usual handling. Bandwidth automation
    * uses it to react to playback right away. It must not throw or wait, and must not change the
    * payload: the event goes on to the Event Console, timelines and notifications as before.
    */
-  onJellyfinWebhook?: (payload: unknown) => void;
+  onJellyfinWebhook?: (payload: unknown, context: JellyfinWebhookContext) => void;
 };
 
 export function createWebhookRoutes(db: Database, hooks: WebhookHooks = {}): Hono {
@@ -84,6 +95,7 @@ export function createWebhookRoutes(db: Database, hooks: WebhookHooks = {}): Hon
 
   for (const source of webhookSources) {
     webhooks.post(`/${source}`, async (c) => {
+      const receivedAt = performance.now();
       const payload = await readJsonPayload(c);
 
       if (!payload.ok) {
@@ -92,7 +104,11 @@ export function createWebhookRoutes(db: Database, hooks: WebhookHooks = {}): Hon
 
       if (source === "jellyfin" && hooks.onJellyfinWebhook) {
         try {
-          hooks.onJellyfinWebhook(payload.value);
+          // The middleware above already turned away requests without the secret, if one is set.
+          hooks.onJellyfinWebhook(payload.value, {
+            authenticated: Boolean(getSharedSecret()),
+            receivedAt,
+          });
         } catch (error) {
           console.error(
             "Jellyfin webhook hook failed",
