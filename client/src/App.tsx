@@ -6,6 +6,7 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import SmsIcon from "@mui/icons-material/Sms";
 import StorageIcon from "@mui/icons-material/Storage";
 import TuneIcon from "@mui/icons-material/Tune";
+import { BandwidthAutomationPanel } from "./BandwidthAutomationPanel";
 import { MessageReceiptsManager } from "./MessageReceiptsManager";
 import {
   type MediaTimelineFocus,
@@ -745,6 +746,10 @@ function Dashboard({
               </Card>
             </Grid>
           ))}
+
+          <Grid item xs={12}>
+            <BandwidthAutomationPanel />
+          </Grid>
         </Grid>
       </Container>
     </>

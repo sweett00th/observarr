@@ -40,6 +40,23 @@ Current durable architecture decisions:
 - External services push live events into ObservaRR through webhook endpoints or scripts. Do not
   poll Jellyfin, Seerr, Radarr, Sonarr, SABnzbd, or other app APIs for the Event Console unless
   explicitly requested.
+- Bandwidth automation (`server/bandwidth/`) is the explicitly requested exception: it polls
+  Jellyfin `/Sessions` and SABnzbd's queue for itself only. Nothing it does feeds the Event Console
+  or Media Timelines. Jellyfin webhooks only nudge it through the `onJellyfinWebhook` hook of
+  `createWebhookRoutes`, which must stay fire-and-forget and leave the payload alone.
+- Bandwidth automation is off by default. Its nonsecret settings and its bookkeeping (whether
+  SABnzbd's current limit is ObservaRR's, and which limit to put back) live in SQLite (migration
+  11). `SABNZBD_URL` and `SABNZBD_API_KEY` are server-only like the Jellyfin ones: never return or
+  log a key. SABnzbd's key goes in the POST body, never in a URL.
+- While enabled it owns SABnzbd's global speed limit and corrects drift; it must never pause or
+  resume SABnzbd or touch jobs, categories or post-processing. Turning it off restores the limit
+  from before automation unless someone changed SABnzbd's limit since. An unreadable Jellyfin
+  applies or keeps the cap: failures must never lift it.
+- Rates are decimal (1 Mb/s = 125,000 bytes/s, 1 MB/s = 1,000,000 bytes/s). SABnzbd's K/M are
+  binary and a bare 1-100 is a percentage, so limits go out as exact bytes in K
+  (`sabnzbdSpeedLimitValue`), and 0 clears the limit.
+- Backend tests live in `tests/` and run with `deno task test` (Deno's runner, `node:assert/strict`,
+  a fake clock and fake Jellyfin/SABnzbd, no network). They are not part of the Docker image.
 - `tools/mock-events.ts` is a local development helper that posts synthetic events into webhook
   endpoints. Keep it dev-only; it is not production polling or event ingestion logic.
 - Internal port defaults to `3020`.

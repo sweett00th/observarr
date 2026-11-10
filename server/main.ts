@@ -1,9 +1,11 @@
 import { Hono } from "@hono/hono";
 import { serveStatic } from "@hono/hono/deno";
+import { createBandwidthController } from "./bandwidth/index.ts";
 import { initializeDatabase } from "./db/index.ts";
 import { requireAdmin } from "./middleware/auth.ts";
 import { createAdminRoutes } from "./routes/admin.ts";
 import { createAuthRoutes } from "./routes/auth.ts";
+import { createBandwidthAutomationRoutes } from "./routes/bandwidthAutomation.ts";
 import { startDeliveryStatusPoller } from "./notifications/deliveryStatusPoller.ts";
 import { createEventRoutes } from "./routes/events.ts";
 import { createEventTemplateRoutes } from "./routes/eventTemplates.ts";
@@ -25,6 +27,7 @@ const db = await initializeDatabase();
 const cleanedTimelines = cleanupExpiredMediaTimelines(db);
 startMediaTimelineCleanupJob(db);
 startDeliveryStatusPoller(db);
+const bandwidthController = createBandwidthController(db);
 
 if (cleanedTimelines > 0) {
   console.log(`Cleaned up ${cleanedTimelines} expired media timeline(s).`);
@@ -70,6 +73,8 @@ app.use("/api/integrations/steamreviews", requireAdmin(db));
 app.use("/api/integrations/steamreviews/*", requireAdmin(db));
 app.use("/api/tracked-media", requireAdmin(db));
 app.use("/api/tracked-media/*", requireAdmin(db));
+app.use("/api/bandwidth-automation", requireAdmin(db));
+app.use("/api/bandwidth-automation/*", requireAdmin(db));
 app.route("/api/events", createEventRoutes());
 app.route("/api/media-timelines", createMediaTimelineRoutes(db));
 app.route("/api/event-templates", createEventTemplateRoutes(db));
@@ -78,8 +83,14 @@ app.route("/api/notification-profiles", createNotificationProfileRoutes(db));
 app.route("/api/integrations/jellyfin", createJellyfinIntegrationRoutes(db));
 app.route("/api/integrations/steamreviews", createSteamreviewsIntegrationRoutes(db));
 app.route("/api/tracked-media", createTrackedMediaRoutes(db));
+app.route("/api/bandwidth-automation", createBandwidthAutomationRoutes(bandwidthController));
 app.route("/api", createAdminRoutes(db));
-app.route("/webhook", createWebhookRoutes(db));
+app.route(
+  "/webhook",
+  createWebhookRoutes(db, {
+    onJellyfinWebhook: (payload) => bandwidthController.handleJellyfinWebhook(payload),
+  }),
+);
 
 app.use("/*", serveStatic({ root: "./client/dist" }));
 
@@ -128,3 +139,31 @@ if (!getSharedSecret()) {
 }
 
 Deno.serve({ hostname: "0.0.0.0", port }, app.fetch);
+
+// Reconciles SABnzbd's speed limit right away when automation is on.
+bandwidthController.start();
+
+let shuttingDown = false;
+
+/** Lets bandwidth automation finish what it is doing (at most 3 seconds) before exiting. */
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+  console.log(`Received ${signal}; shutting down.`);
+  await Promise.race([
+    bandwidthController.stop(),
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ]);
+  Deno.exit(0);
+}
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  try {
+    Deno.addSignalListener(signal, () => void shutdown(signal));
+  } catch {
+    // Windows has no SIGTERM listener; Ctrl+C (SIGINT) still works there.
+  }
+}
